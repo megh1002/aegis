@@ -45,3 +45,8 @@ next-env.d.ts
 
 # Personal study notes (not published)
 /notes
+
+# Personal editor settings
+.vscode/
+.idea/
+*.log

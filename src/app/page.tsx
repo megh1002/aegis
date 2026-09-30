@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { CheckpointStore, computeMetrics, type Checkpoint, type Metrics } from "../../core/checkpoints";
 import { evaluate } from "../../core/evaluate";
-import { applyTrust, describeLimits, describePattern, suggestTrust, type TrustGrant, type TrustSuggestion } from "../../core/trust";
+import { applyTrust, suggestTrust, type TrustGrant, type TrustSuggestion } from "../../core/trust";
+import { plainAction, plainEnv, plainLimits, plainParam, plainPattern, technical } from "@/lib/plain";
 import type { Action } from "../../core/types";
 import relayPolicy from "../../policies/relay";
 
@@ -249,8 +250,9 @@ function Example() {
           const held = evaluate(action, relayPolicy).decision === "escalate";
           return (
             <li key={action.tool + action.target} className="flex items-center justify-between gap-3 text-sm">
-              <span className="truncate font-mono text-[13px] text-neutral-300">
-                {action.tool} <span className="text-neutral-500">→ {action.target}</span>
+              <span className="min-w-0">
+                <span className="block truncate text-neutral-200">{plainAction(action)}</span>
+                <span className="block truncate font-mono text-[11px] text-neutral-600">{technical(action)}</span>
               </span>
               <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${held ? "bg-amber-400/15 text-amber-200" : "bg-emerald-400/10 text-emerald-300"}`}>
                 {held ? "waits for you" : "runs now"}
@@ -265,7 +267,7 @@ function Example() {
 
 function HowItWorks() {
   const steps = [
-    ["The agent acts", "It calls a tool: restart a server, scale a service, run a query."],
+    ["The agent acts", "It tries to do something: restart a server, add capacity, change data."],
     ["Aegis checks your rules", "Safe actions go straight through."],
     ["You decide the risky few", "Approve, edit or reject. Trust grows as you approve."],
   ];
@@ -317,26 +319,19 @@ function PendingCard({
   return (
     <motion.li layout initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.96, x: 40 }} transition={{ type: "spring", stiffness: 380, damping: 30 }} className="glass rounded-2xl border border-amber-400/25 p-5">
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-        {a.environment && <span className={`rounded-full border px-2 py-0.5 font-medium ${envBadge(a.environment)}`}>{a.environment}</span>}
+        {a.environment && <span className={`rounded-full border px-2 py-0.5 font-medium ${envBadge(a.environment)}`}>{plainEnv(a.environment)}</span>}
         <span className="font-mono text-neutral-400">{a.agent}</span>
         {left !== undefined && <span className={`ml-auto tabular-nums ${left < 60_000 ? "text-rose-300" : "text-neutral-500"}`}>{timeLeft(left)}</span>}
       </div>
 
-      <p className="font-mono text-[15px] text-white">
-        {a.tool}
-        {a.target && (
-          <>
-            <span className="mx-2 text-neutral-500">→</span>
-            <span className="text-amber-200">{a.target}</span>
-          </>
-        )}
-      </p>
+      <p className="text-[17px] font-medium text-white">{plainAction(a)}</p>
+      <p className="mt-0.5 font-mono text-xs text-neutral-500">{technical(a)}</p>
       {chips.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
           {chips.map(([k, v]) =>
             editing && (typeof v === "number" || typeof v === "string" || typeof v === "boolean") ? (
               <label key={k} className="flex items-center gap-1.5 rounded-md border border-sky-400/40 bg-sky-400/10 px-2 py-0.5 font-mono text-xs text-sky-100">
-                {k}:
+                {plainParam(k)}:
                 <input
                   aria-label={`New value for ${k}`}
                   inputMode={typeof v === "number" ? "numeric" : undefined}
@@ -347,7 +342,7 @@ function PendingCard({
               </label>
             ) : (
               <span key={k} className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 font-mono text-xs text-neutral-300">
-                {k}: <span className="text-white">{typeof v === "string" ? v : JSON.stringify(v)}</span>
+                {plainParam(k)}: <span className="text-white">{typeof v === "string" ? v : JSON.stringify(v)}</span>
               </span>
             ),
           )}
@@ -410,17 +405,14 @@ function ActivityRow({ c }: { c: Checkpoint }) {
     <motion.li initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} className="glass grid grid-cols-[auto_1fr] items-start gap-x-3 gap-y-1 rounded-xl px-4 py-2.5 text-sm sm:grid-cols-[72px_1fr_auto]">
       <span className="pt-0.5 font-mono text-xs tabular-nums text-neutral-500">{clockTime(c.createdAt)}</span>
       <div className="min-w-0">
-        <div className="truncate font-mono text-[13px] text-neutral-200">
-          {a.tool}
-          {a.target && <span className="text-neutral-400"> → {a.target}</span>}
-          {a.environment && <span className="ml-2 text-xs text-neutral-500">{a.environment}</span>}
-        </div>
+        <div className="truncate text-[13.5px] text-neutral-200">{plainAction(a)}</div>
+        <div className="truncate font-mono text-[11px] text-neutral-600">{technical(a)}</div>
         <div className="truncate text-xs text-neutral-500">
-          {c.decidedBy === "policy" ? `Rule: ${c.verdict.matchedRules.join(", ")}` : c.verdict.explanation}
+          {c.decidedBy === "policy" ? `Why it ran: ${c.verdict.matchedRules.join(", ")}` : c.verdict.explanation}
         </div>
         {c.edit && (
           <div className="mt-0.5 text-xs text-sky-300">
-            Human changed {c.edit.changes.map((ch) => `${ch.key} ${JSON.stringify(ch.from)} → ${JSON.stringify(ch.to)}`).join(", ")}
+            A person changed {c.edit.changes.map((ch) => `${plainParam(ch.key)} from ${JSON.stringify(ch.from)} to ${JSON.stringify(ch.to)}`).join(", ")}
           </div>
         )}
         {c.execution && (
@@ -476,12 +468,12 @@ function TrustPanel({
           {suggestions.map((sg) => (
             <motion.li key={sg.key} layout initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: 40 }} className="glass rounded-2xl border border-sky-400/25 p-5">
               <p className="text-sm text-neutral-300">
-                Humans approved <span className="font-mono text-white">{describePattern(sg.pattern)}</span> {sg.approvals} times in a row, unchanged
+                You approved <span className="font-medium text-white">“{plainPattern(sg.pattern)}”</span> {sg.approvals} times in a row, without changing it
                 {sg.avgDecisionMs > 0 && <>, taking {(sg.avgDecisionMs / 1000).toFixed(0)}s each on average</>}.
               </p>
               <p className="mt-2 text-sm text-neutral-400">
                 Trust it: let exactly this run without asking
-                {Object.keys(sg.params).length > 0 && <>, only for <span className="font-mono text-neutral-200">{describeLimits(sg.params)}</span></>}.
+                {Object.keys(sg.params).length > 0 && <>, only for <span className="text-neutral-200">{plainLimits(sg.params)}</span></>}.
                 {sg.exceptFrom.length > 0 && <> Makes a narrow exception to {sg.exceptFrom.map((r) => `“${r}”`).join(", ")}.</>}
               </p>
               <div className="mt-4 flex gap-2.5">
@@ -501,8 +493,8 @@ function TrustPanel({
             <li key={g.id} className="glass flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-2.5 text-sm">
               <div className="min-w-0">
                 <span className="mr-2 rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 text-[11px] font-medium text-sky-300">trusted</span>
-                <span className="font-mono text-[13px] text-neutral-200">{describePattern(g.pattern)}</span>
-                {Object.keys(g.params).length > 0 && <span className="ml-2 font-mono text-xs text-neutral-500">{describeLimits(g.params)}</span>}
+                <span className="text-[13.5px] text-neutral-200">{plainPattern(g.pattern)}</span>
+                {Object.keys(g.params).length > 0 && <span className="ml-2 text-xs text-neutral-500">{plainLimits(g.params)}</span>}
                 <span className="ml-2 text-xs text-neutral-500">after {g.approvals} approvals</span>
               </div>
               <button disabled={!canDecide} onClick={() => onRevoke(g.id)} className="text-xs text-rose-300 underline-offset-2 hover:underline disabled:opacity-40">
@@ -831,7 +823,7 @@ export default function Console() {
         {showConsoleSection && (
         <section id="console" className="scroll-mt-6">
           <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-xs font-medium uppercase tracking-[0.18em] text-neutral-500">The console</h2>
+            <h2 className="text-xs font-medium uppercase tracking-[0.18em] text-neutral-500">Your approvals</h2>
             <span className="text-xs text-neutral-500">
               {demo ? "Simulated incident. Your clicks are the human decisions." : DEMO_ONLY ? "Start a demo above to see it work." : "Connected to agents on this computer."}
             </span>
