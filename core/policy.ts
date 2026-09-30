@@ -3,7 +3,6 @@
 // so we check again: a misspelled field like "enviroment" would otherwise
 // be ignored, turning "allow in staging" into "allow everywhere".
 
-import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import type { Policy } from "./types";
 
@@ -42,10 +41,4 @@ export function definePolicy(policy: Policy): Policy {
     throw new Error(`Policy is invalid:\n${problems}`);
   }
   return policy;
-}
-
-// Load a policy file by path (its default export).
-export async function loadPolicy(path: string): Promise<Policy> {
-  const mod = await import(pathToFileURL(path).href);
-  return definePolicy(mod.default);
 }

@@ -1,0 +1,124 @@
+// A gate is where the proxy asks "may this action run?". The real one talks
+// to the Aegis console over HTTP. Tests use an in-memory one.
+
+import { CheckpointStore, type NewCheckpoint } from "../core/checkpoints";
+
+export interface GateResult {
+  approved: boolean;
+  // Shown to the agent when the action doesn't run.
+  reason: string;
+  checkpointId?: string;
+}
+
+export interface WaitOptions {
+  // The agent cancelled its request.
+  signal?: AbortSignal;
+  // Called while a human is deciding, so the proxy can tell the agent it's still waiting.
+  onWaiting?: (waitedMs: number) => void;
+}
+
+export interface Gate {
+  submit(request: NewCheckpoint, options?: WaitOptions): Promise<GateResult>;
+}
+
+const sleep = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => (clearTimeout(t), resolve()), { once: true });
+  });
+
+function explain(status: string, explanation: string): string {
+  switch (status) {
+    case "rejected": return `A human rejected this action. (${explanation})`;
+    case "expired": return `No human approved this in time, so it did not run. (${explanation})`;
+    default: return `Not approved (${status}).`;
+  }
+}
+
+/* ---------- the real gate: the Aegis console over HTTP ---------- */
+
+export class ConsoleGate implements Gate {
+  constructor(
+    private baseUrl: string,
+    private opts: { apiKey?: string; pollMs?: number; timeoutMs?: number } = {},
+  ) {}
+
+  private headers() {
+    return {
+      "Content-Type": "application/json",
+      ...(this.opts.apiKey ? { Authorization: `Bearer ${this.opts.apiKey}` } : {}),
+    };
+  }
+
+  async submit(request: NewCheckpoint, { signal, onWaiting }: WaitOptions = {}): Promise<GateResult> {
+    const timeoutMs = request.timeoutMs ?? this.opts.timeoutMs;
+
+    // Fail closed: if Aegis can't record the action, the action doesn't run.
+    // No record means no oversight, even for actions the policy allows.
+    let created: { checkpoint: { id: string; status: string; verdict: { explanation: string } } };
+    try {
+      const res = await fetch(`${this.baseUrl}/api/checkpoints`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ ...request, timeoutMs }),
+        signal,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      created = await res.json();
+    } catch (e) {
+      return {
+        approved: false,
+        reason: `Aegis console unreachable at ${this.baseUrl} (${(e as Error).message}). Blocked, because Aegis fails closed.`,
+      };
+    }
+
+    let checkpoint = created.checkpoint;
+    const started = Date.now();
+    const pollMs = this.opts.pollMs ?? 1000;
+    // Safety net in case the console never answers: stop a little after
+    // the checkpoint's own deadline and treat it as not approved.
+    const giveUpAt = started + (timeoutMs ?? 5 * 60_000) + 10_000;
+
+    while (checkpoint.status === "pending") {
+      if (signal?.aborted) return { approved: false, reason: "The agent cancelled the request.", checkpointId: checkpoint.id };
+      if (Date.now() > giveUpAt) return { approved: false, reason: "Timed out waiting for Aegis.", checkpointId: checkpoint.id };
+      onWaiting?.(Date.now() - started);
+      await sleep(pollMs, signal);
+      try {
+        const res = await fetch(`${this.baseUrl}/api/checkpoints/${checkpoint.id}`, { headers: this.headers(), signal });
+        if (res.ok) checkpoint = (await res.json()).checkpoint;
+      } catch {
+        // The console blipped; keep waiting until the deadline.
+      }
+    }
+
+    return checkpoint.status === "approved"
+      ? { approved: true, reason: checkpoint.verdict.explanation, checkpointId: checkpoint.id }
+      : { approved: false, reason: explain(checkpoint.status, checkpoint.verdict.explanation), checkpointId: checkpoint.id };
+  }
+}
+
+/* ---------- an in-memory gate, for tests ---------- */
+
+export class MemoryGate implements Gate {
+  constructor(
+    public store = new CheckpointStore(),
+    // Decides escalated checkpoints, standing in for a human.
+    private human: (id: string) => "approved" | "rejected" | "no answer" = () => "no answer",
+  ) {}
+
+  async submit(request: NewCheckpoint): Promise<GateResult> {
+    const { checkpoint } = this.store.create(request);
+    if (checkpoint.status === "pending") {
+      const answer = this.human(checkpoint.id);
+      if (answer === "no answer") {
+        return { approved: false, reason: explain("expired", checkpoint.verdict.explanation), checkpointId: checkpoint.id };
+      }
+      this.store.decide(checkpoint.id, answer);
+    }
+    const final = this.store.get(checkpoint.id)!;
+    return final.status === "approved"
+      ? { approved: true, reason: final.verdict.explanation, checkpointId: final.id }
+      : { approved: false, reason: explain(final.status, final.verdict.explanation), checkpointId: final.id };
+  }
+}

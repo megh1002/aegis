@@ -7,10 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "simulate": "tsx scripts/simulate-incident.ts"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.110.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "motion": "^12.42.2",
     "next": "16.2.9",
     "react": "19.2.4",
@@ -25,7 +26,9 @@
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
+    "tsx": "^4.23.15",
     "typescript": "^5",
     "vitest": "^4.1.11"
-  }
+  },
+  "type": "module"
 }

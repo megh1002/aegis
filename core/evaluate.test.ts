@@ -2,7 +2,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { evaluate } from "./evaluate";
 import relay from "../policies/relay";
-import { definePolicy, loadPolicy } from "./policy";
+import { loadPolicy } from "./load";
+import { definePolicy } from "./policy";
 import type { Action, Policy } from "./types";
 
 const decide = (a: Omit<Action, "agent">) => evaluate({ agent: "relay-oncall", ...a }, relay);
@@ -16,7 +17,7 @@ describe("Relay policy: the incidents from the customer brief", () => {
       params: { instances: "all" },
     });
     expect(v.decision).toBe("escalate");
-    expect(v.matchedRules).toContain("Databases always need a human");
+    expect(v.matchedRules).toContain("Changing a database needs a human");
   });
 
   it("escalates even when the agent insists it is safe", () => {
@@ -59,6 +60,13 @@ describe("Relay policy: the incidents from the customer brief", () => {
     expect(scale(5).decision).toBe("allow");
     expect(scale(6).decision).toBe("escalate");
     expect(scale(20).decision).toBe("escalate");
+  });
+
+  it("allows reading a database's metrics (looking isn't changing)", () => {
+    // Found by the demo: a broad "anything touching postgres-*" rule held
+    // plain reads for a human, because strictest wins.
+    const v = decide({ tool: "get_metrics", target: "postgres-primary", environment: "production" });
+    expect(v.decision).toBe("allow");
   });
 
   it("allows read-only tools in production", () => {
@@ -112,7 +120,7 @@ describe("Safe defaults: when in doubt, ask a human", () => {
       environment: "production",
       params: { instances: 1 },
     });
-    expect(v.matchedRules).not.toContain("Databases always need a human");
+    expect(v.matchedRules).not.toContain("Changing a database needs a human");
   });
 
   it("gives the same answer no matter what order the rules are in", () => {

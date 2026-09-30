@@ -33,9 +33,14 @@ export default definePolicy({
     },
 
     // "Restarting a database ... is not."
+    // Only tools that *change* something: with strictest-wins, a broader
+    // rule would also hold plain reads like checking database metrics.
     {
-      name: "Databases always need a human",
-      match: { target: ["postgres-*", "redis-*"] },
+      name: "Changing a database needs a human",
+      match: {
+        target: ["postgres-*", "redis-*"],
+        tool: ["restart_*", "scale_*", "rollback_*", "delete_*", "drop_*", "update_*"],
+      },
       decision: "escalate",
     },
 

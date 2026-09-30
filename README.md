@@ -1,92 +1,91 @@
-# Aegis — Mission Control for AI Agents
+# Aegis
 
-Human-in-the-loop oversight for autonomous AI agents. Agents run on their own, but
-**pause and raise their hand before risky actions**. A human approves or rejects from a
-live console. Low-risk actions are auto-approved by policy; everything is logged.
+**A safety checkpoint you put in front of any AI agent's tools.** Safe actions run on their own, risky ones wait for a human, and everything is on record.
 
-> The trust-and-control layer that lets teams actually deploy agents that take real actions.
+> Monitoring tells you what your agent did. Aegis decides what your agent is allowed to do.
 
-## The pieces
+```
+AI agent  ──►  Aegis  ──►  real tools (servers, databases, GitHub…)
+                 │
+       policy · approvals · record
+```
 
-- **SDK** (`src/lib/aegis-sdk.ts`) — drop `requireApproval()` into any agent. It pauses the
-  agent until a human decides (or auto-policy resolves it).
-- **API** (`src/app/api/checkpoints/…`) — create a checkpoint, read its status, decide on it.
-- **Console** (`src/app/page.tsx`) — live queue of pending approvals + trust metrics + history.
-- **Store** (`src/lib/store.ts`) — Supabase when configured, in-memory fallback for local dev.
+Aegis is an [MCP](https://modelcontextprotocol.io) proxy. It looks like the tool server to the agent, and like the agent to the tool server, so it works with any MCP agent (Claude Code, Cursor, Claude Desktop, your own) without changing the agent.
 
-## Connect your agent
+- **Aegis judges the action, not the agent's opinion.** Rules look at what will actually run (tool, target, environment, parameters). An agent saying "this is low risk" changes nothing.
+- **Strictest rule wins, and unknown actions go to a human.**
+- **Fails closed.** If the console is unreachable, nothing runs.
+- **The same change can't run twice by accident.**
 
-Aegis is agent-agnostic — anything that can make an HTTP call can use it.
+> **Status:** work in progress (v2). See [docs/PLAN.md](docs/PLAN.md).
 
-**Option A — SDK (TypeScript):** copy `src/lib/aegis-sdk.ts` into your agent project:
+## Try it in 2 minutes
+
+```bash
+npm install
+npm run dev
+```
+
+Open http://localhost:3000 and click **Run the Relay incident demo**. A simulated on-call agent works a real-looking outage: most actions run on their own, and you decide the two that matter.
+
+## Run the real proxy
+
+With the console running, in a second terminal:
+
+```bash
+npm run simulate
+```
+
+A scripted agent works the same incident through the real proxy and a simulated infrastructure server. Approve or reject the held actions in the console.
+
+## Connect Claude Code
+
+```bash
+claude mcp add relay-infra -- npx tsx mcp/aegis-proxy.ts --policy policies/relay.ts --agent relay-oncall -- npx tsx mcp/relay-infra-server.ts
+```
+
+Run it from this folder. Everything after the last `--` is the MCP server Aegis protects; swap in any other server.
+
+## Write a policy
+
+Policies are TypeScript ([policies/relay.ts](policies/relay.ts)):
 
 ```ts
-import { requireApproval } from "./aegis-sdk";
-
-const { approved } = await requireApproval({
-  agent: "refund-bot",
-  action: "Issue a $500 refund to customer #4821",
-  reasoning: "Customer claims item never arrived.",
-  risk: "high",
+export default definePolicy({
+  rules: [
+    { name: "Staging is free", match: { environment: "staging" }, decision: "allow" },
+    {
+      name: "Small scale-ups are fine",
+      match: { tool: "scale_service" },
+      when: (p) => typeof p.replicas === "number" && p.replicas <= 5,
+      decision: "allow",
+    },
+    {
+      name: "Changing a database needs a human",
+      match: { target: ["postgres-*"], tool: ["restart_*", "drop_*"] },
+      decision: "escalate",
+    },
+  ],
 });
-if (approved) await issueRefund();
 ```
 
-Set `AEGIS_URL` (your console URL) and `AEGIS_API_KEY` in the agent's environment.
+Every matching rule counts. If any says `escalate`, a human decides. If none match, a human decides.
 
-**Option B — raw HTTP (any language / framework):**
+## Project layout
+
+| Path | What it is |
+|---|---|
+| `core/` | The rules engine and checkpoint logic. No web code, runs anywhere. |
+| `mcp/aegis-proxy.ts` | The MCP proxy |
+| `mcp/relay-infra-server.ts` | A simulated infrastructure MCP server for demos and tests |
+| `policies/` | Policy files |
+| `src/` | The console (Next.js) |
+| `docs/` | [Plan](docs/PLAN.md), [customer brief](docs/CUSTOMER_BRIEF.md), [decisions](docs/DECISIONS.md), [glossary](docs/GLOSSARY.md) |
+
+## Tests
 
 ```bash
-# 1. Agent raises its hand before a risky action
-curl -X POST $AEGIS_URL/api/checkpoints \
-  -H "Authorization: Bearer $AEGIS_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"agent":"my-bot","action":"...","reasoning":"...","risk":"high"}'
-
-# 2. Poll until a human decides (status: pending → approved | rejected)
-curl $AEGIS_URL/api/checkpoints/<id>
+npm test
 ```
 
-Works from LangChain/LangGraph tool wrappers, CrewAI callbacks, Claude tool-use loops —
-wrap your risky tools so they call Aegis before executing.
-
-## Environment
-
-| Var | Where | Purpose |
-| --- | --- | --- |
-| `SUPABASE_URL` | console (Vercel) | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | console (Vercel) | server-side DB access |
-| `AEGIS_API_KEY` | console + agents | shared secret agents use to create checkpoints |
-| `AEGIS_URL` | agents | base URL of the deployed console |
-
-Run `supabase/schema.sql` once in the Supabase SQL editor to create the table.
-
-## Run it
-
-```bash
-npm run dev                   # start the console at http://localhost:3000
-node scripts/demo-agent.mjs   # in another terminal — a demo "refund bot"
-```
-
-The demo bot auto-approves a low-risk email, then **waits** on a $500 refund until you
-click Approve/Reject in the console.
-
-## The thesis
-
-Not "keep a human in the loop" (friction). It's "let teams safely take humans *out*
-of the loop, one proven-safe action at a time." The policy engine auto-approves as much
-as it safely can and escalates only the risky few; the metrics prove human load is low
-and falling. **Full autonomy, without capsizing.**
-
-## Roadmap
-
-- [x] Walking skeleton: checkpoint → live console → human decision
-- [x] Policy engine: auto-approve vs. escalate (risk + sensitive-action rules)
-- [x] Trust metrics: auto-approve rate, intervention rate, veto rate, time-to-decide
-- [x] Polished command-deck UI (animated background, trust ring, motion, glass)
-- [x] Deployed to Vercel · Supabase-backed store with local in-memory fallback
-- [ ] Supabase realtime (replace console polling)
-- [ ] Console auth (right now anyone with the URL can approve)
-- [ ] Configurable policies per agent + a trust curve that escalates less over time
-- [ ] Rewind / replay an agent's decision history
-- [ ] Wire it into a real agent (dogfood on Research Crew / Claro)
+Covers the rules, checkpoints, and the full agent → Aegis → tools chain, including an agent that lies about risk and the console being down.
