@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Aegis — Mission Control for AI Agents",
+  title: "Aegis · A safety checkpoint for AI agents",
   description:
-    "Human oversight for autonomous AI agents. Agents run on their own; only the risky few actions escalate to a human.",
+    "Aegis sits between an AI agent and its tools. Safe actions run instantly, risky ones wait for a human, and trust is earned over time.",
 };
 
 export default function RootLayout({

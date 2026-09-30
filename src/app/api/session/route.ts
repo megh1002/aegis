@@ -19,6 +19,7 @@ export async function POST(req: Request) {
   }
   (await cookies()).set(APPROVER_COOKIE, token!, {
     httpOnly: true, // page scripts can't read it
+    secure: new URL(req.url).protocol === "https:", // HTTPS-only when served over HTTPS
     sameSite: "strict", // other sites can't send it
     path: "/",
     maxAge: 60 * 60 * 12,

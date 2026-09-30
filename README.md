@@ -86,6 +86,10 @@ Every matching rule counts. If any says `escalate`, a human decides. If none mat
 | `src/` | The console (Next.js) |
 | `docs/` | [Plan](docs/PLAN.md), [customer brief](docs/CUSTOMER_BRIEF.md), [decisions](docs/DECISIONS.md) |
 
+## Security
+
+See [SECURITY.md](SECURITY.md) for the threat model, protections and known limits.
+
 ## Tests
 
 ```bash

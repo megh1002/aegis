@@ -1,6 +1,8 @@
 // Runs once when the console starts: print the approval link.
 export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
+  // The public demo site has no live console, so there's nothing to approve.
+  if (process.env.NEXT_PUBLIC_AEGIS_DEMO_ONLY === "1") return;
   const { approverToken } = await import("./lib/approver");
   const port = process.env.PORT ?? "3000";
   console.log(

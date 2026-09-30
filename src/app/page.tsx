@@ -5,12 +5,14 @@ import { AnimatePresence, motion } from "motion/react";
 import { CheckpointStore, computeMetrics, type Checkpoint, type Metrics } from "../../core/checkpoints";
 import { evaluate } from "../../core/evaluate";
 import { applyTrust, describeLimits, describePattern, suggestTrust, type TrustGrant, type TrustSuggestion } from "../../core/trust";
-import type { Action } from "../../core/types";
+import type { Action, Verdict } from "../../core/types";
 import relayPolicy from "../../policies/relay";
 
 /* ---------- helpers ---------- */
 
 const pct = (n: number) => `${Math.round(n * 100)}%`;
+// Set when built for the public website: demos only, no live console.
+const DEMO_ONLY = process.env.NEXT_PUBLIC_AEGIS_DEMO_ONLY === "1";
 const clockTime = (ms: number) =>
   new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
@@ -237,31 +239,133 @@ function TrendChart({ trend }: { trend: Metrics["trend"] }) {
   );
 }
 
-function FlowDiagram() {
-  const box = "glass rounded-xl px-4 py-3 text-center";
-  const arrow = "hidden text-neutral-600 sm:block";
+// Sample actions for the hero's live stream. Each badge comes from the real
+// rules engine and Relay's real policy, so what it shows is accurate.
+const STREAM: Action[] = [
+  { agent: "relay-oncall", tool: "read_logs", target: "api-server", environment: "production" },
+  { agent: "relay-oncall", tool: "scale_service", target: "worker-queue", environment: "production", params: { replicas: 4 } },
+  { agent: "relay-oncall", tool: "restart_service", target: "postgres-primary", environment: "production", params: { instances: "all" } },
+  { agent: "relay-oncall", tool: "get_metrics", target: "postgres-primary", environment: "production" },
+  { agent: "relay-oncall", tool: "rollback_deploy", target: "api-server", environment: "staging" },
+  { agent: "relay-oncall", tool: "scale_service", target: "api-server", environment: "production", params: { replicas: 20 } },
+  { agent: "relay-oncall", tool: "restart_service", target: "web-frontend", environment: "production", params: { instances: 1 } },
+  { agent: "relay-oncall", tool: "drop_table", target: "orders", environment: "staging" },
+];
+
+function LiveStream() {
+  const [rows, setRows] = useState<{ id: number; action: Action; verdict: Verdict }[]>([]);
+  useEffect(() => {
+    let i = 0;
+    const tick = () => {
+      const action = STREAM[i % STREAM.length];
+      const row = { id: i, action, verdict: evaluate(action, relayPolicy) };
+      setRows((r) => [row, ...r].slice(0, 5));
+      i++;
+    };
+    const first = setTimeout(tick, 0);
+    const t = setInterval(tick, 1700);
+    return () => {
+      clearTimeout(first);
+      clearInterval(t);
+    };
+  }, []);
+
   return (
-    <div className="mb-10 grid items-center gap-3 sm:grid-cols-[1fr_auto_1.3fr_auto_1fr]">
-      <div className={box}>
-        <div className="text-sm font-medium text-white">AI agent</div>
-        <div className="mt-0.5 text-xs text-neutral-500">Claude Code, Cursor, your own</div>
+    <div className="glass relative overflow-hidden rounded-3xl p-4 sm:p-5">
+      <div className="mb-3 flex items-center justify-between text-xs">
+        <span className="flex items-center gap-2 font-mono text-neutral-400">
+          <span className="pulse-dot h-2 w-2 rounded-full bg-emerald-400" /> relay-oncall
+        </span>
+        <span className="text-neutral-500">every action, checked</span>
       </div>
-      <span className={arrow}>→</span>
-      <div className={`${box} border border-indigo-400/30 shadow-[0_0_30px_-8px_rgba(99,102,241,0.6)]`}>
-        <div className="flex items-center justify-center gap-1.5 text-sm font-medium text-white">
-          <Shield className="h-4 w-4" /> Aegis checks every action
-        </div>
-        <div className="mt-1.5 flex flex-wrap justify-center gap-1.5 text-[11px]">
-          <span className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2 py-0.5 text-emerald-300">safe → runs now</span>
-          <span className="rounded-full border border-amber-400/25 bg-amber-400/10 px-2 py-0.5 text-amber-300">risky → you decide</span>
-        </div>
-      </div>
-      <span className={arrow}>→</span>
-      <div className={box}>
-        <div className="text-sm font-medium text-white">Real tools</div>
-        <div className="mt-0.5 text-xs text-neutral-500">servers, databases, GitHub</div>
-      </div>
+      <ul className="space-y-2" aria-live="off">
+        <AnimatePresence initial={false}>
+          {rows.map(({ id, action, verdict }) => {
+            const held = verdict.decision === "escalate";
+            return (
+              <motion.li
+                key={id}
+                layout
+                initial={{ opacity: 0, y: -14, scale: 0.97 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ type: "spring", stiffness: 420, damping: 32 }}
+                className={`rounded-xl border px-3 py-2.5 ${held ? "border-amber-400/30 bg-amber-400/[0.06]" : "border-white/[0.07] bg-white/[0.03]"}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-mono text-[12.5px] text-neutral-200">
+                    {action.tool}
+                    {action.target && <span className="text-neutral-500"> → {action.target}</span>}
+                  </span>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${held ? "bg-amber-400/15 text-amber-200" : "bg-emerald-400/10 text-emerald-300"}`}>
+                    {held ? "held for a human" : "runs now"}
+                  </span>
+                </div>
+                <div className="mt-1 truncate text-[11px] text-neutral-500">
+                  {action.environment} · {held ? (verdict.escalatedBy?.[0] ?? "no rule covers this") : verdict.matchedRules[0]}
+                </div>
+              </motion.li>
+            );
+          })}
+        </AnimatePresence>
+      </ul>
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#0b0c14] to-transparent" />
     </div>
+  );
+}
+
+function HowItWorks() {
+  const steps = [
+    { t: "The agent acts", d: "Claude Code, Cursor or your own agent calls a tool: restart a server, scale a service, run a query." },
+    { t: "Aegis checks your rules", d: "It looks at what will actually run, not what the agent says about it. Safe actions go straight through." },
+    { t: "You decide the risky few", d: "Approve, edit or reject in seconds. Everything is recorded, and trust grows as you approve." },
+  ];
+  return (
+    <section className="mb-14">
+      <h2 className="mb-5 text-xs font-medium uppercase tracking-[0.18em] text-neutral-500">How it works</h2>
+      <ol className="grid gap-3 sm:grid-cols-3">
+        {steps.map((s, i) => (
+          <motion.li key={s.t} initial={{ opacity: 0, y: 14 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }} className="glass glass-hover relative rounded-2xl p-5">
+            <span className="mb-3 grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-indigo-500 to-sky-500 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30">{i + 1}</span>
+            <div className="text-[15px] font-medium text-white">{s.t}</div>
+            <p className="mt-1.5 text-sm leading-relaxed text-neutral-400">{s.d}</p>
+          </motion.li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function Icon({ d }: { d: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5" aria-hidden>
+      <path d={d} />
+    </svg>
+  );
+}
+
+function Features() {
+  const items = [
+    { icon: "M12 3 4 6v6c0 4.5 3.2 7.7 8 9 4.8-1.3 8-4.5 8-9V6l-8-3Z M9 12l2 2 4-4", t: "Judges facts, not opinions", d: "Rules see the exact tool, target and parameters. An agent calling its own action “low risk” changes nothing." },
+    { icon: "M7 11V8a5 5 0 0 1 10 0v3 M5 11h14v10H5z", t: "Fails closed", d: "If Aegis can’t be reached, nothing runs. No record means no action, even for safe ones." },
+    { icon: "M3 17l6-6 4 4 8-8 M14 7h7v7", t: "Earns trust, narrowly", d: "After repeated clean approvals it suggests letting that exact action run on its own. Hard lines, like database changes, never loosen." },
+    { icon: "M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1 M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1", t: "Tamper-evident record", d: "Every decision is chained together with hashes. Change one past line and verification points straight at it." },
+  ];
+  return (
+    <section className="mb-14">
+      <h2 className="mb-5 text-xs font-medium uppercase tracking-[0.18em] text-neutral-500">Why it&apos;s different</h2>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {items.map((f, i) => (
+          <motion.div key={f.t} initial={{ opacity: 0, y: 14 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.08 }} className="glass glass-hover rounded-2xl p-5">
+            <div className="mb-3 grid h-9 w-9 place-items-center rounded-xl border border-indigo-400/25 bg-indigo-400/10 text-indigo-200">
+              <Icon d={f.icon} />
+            </div>
+            <div className="text-[15px] font-medium text-white">{f.t}</div>
+            <p className="mt-1.5 text-sm leading-relaxed text-neutral-400">{f.d}</p>
+          </motion.div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -499,24 +603,6 @@ function TrustPanel({
   );
 }
 
-function ConnectAgent() {
-  return (
-    <details className="glass group rounded-2xl p-5">
-      <summary className="cursor-pointer list-none text-sm font-medium text-neutral-200">
-        <span className="mr-2 inline-block transition group-open:rotate-90">›</span>
-        Connect your own agent
-      </summary>
-      <div className="mt-4 space-y-3 text-sm text-neutral-400">
-        <p>Aegis sits in front of any MCP server. Point your agent at Aegis instead of the server, and every tool call is checked first. For Claude Code:</p>
-        <pre className="overflow-x-auto rounded-xl border border-white/10 bg-black/40 p-4 font-mono text-xs leading-relaxed text-neutral-300">{`claude mcp add relay-infra -- \\
-  npx tsx mcp/aegis-proxy.ts --policy policies/relay.ts --agent relay-oncall -- \\
-  npx tsx mcp/relay-infra-server.ts`}</pre>
-        <p>Keep this console running. If it goes down, Aegis blocks every action until it&apos;s back (it fails closed).</p>
-      </div>
-    </details>
-  );
-}
-
 /* ---------- page ---------- */
 
 export default function Console() {
@@ -542,6 +628,9 @@ export default function Console() {
   // Resolves when the visitor clicks "Continue the week".
   const continueWeek = useRef<(() => void) | null>(null);
   const [weekPaused, setWeekPaused] = useState(false);
+  const [progress, setProgress] = useState<{ step: number; total: number }>({ step: 0, total: 0 });
+
+  const showConsole = () => document.getElementById("console")?.scrollIntoView({ behavior: "smooth", block: "start" });
 
   const load = useCallback(async () => {
     try {
@@ -560,6 +649,7 @@ export default function Console() {
 
   useEffect(() => {
     let cancelled = false;
+    if (DEMO_ONLY) return;
     (async () => {
       const token = new URLSearchParams(window.location.search).get("token");
       if (token) {
@@ -578,7 +668,7 @@ export default function Console() {
   }, []);
 
   useEffect(() => {
-    if (demo) return;
+    if (demo || DEMO_ONLY) return;
     const first = setTimeout(load, 0);
     const t = setInterval(load, 1000);
     return () => {
@@ -594,13 +684,16 @@ export default function Console() {
     setDemo(true);
     setDemoKind("incident");
     setDemoDone(false);
+    setProgress({ step: 0, total: DEMO.length });
+    setTimeout(showConsole, 50);
     // Copy each checkpoint so React sees a change and re-renders.
     const refresh = () => setDemoCheckpoints(store.list().map((c) => ({ ...c })));
     refresh();
     const alive = () => demoRun.current === run;
 
-    for (const step of DEMO) {
+    for (const [i, step] of DEMO.entries()) {
       if (!alive()) return;
+      setProgress({ step: i + 1, total: DEMO.length });
       setNarration({ text: step.say });
       await sleep(1100);
       if (!alive()) return;
@@ -647,12 +740,15 @@ export default function Console() {
     setDemoKind("week");
     setDemoDone(false);
     setWeekPaused(false);
+    setProgress({ step: 0, total: WEEK.length });
+    setTimeout(showConsole, 50);
     const refresh = () => setDemoCheckpoints(store.list().map((c) => ({ ...c })));
     refresh();
 
     for (let day = 0; day < WEEK.length; day++) {
       if (!alive()) return;
       simNow += DAY_MS;
+      setProgress({ step: day + 1, total: WEEK.length });
       setNarration({ text: `Day ${day + 1}. ${day === 4 ? "Another bad night, and the agent wants to restart the database." : "The routine fixes come up again."}` });
       for (const step of WEEK[day]) {
         await sleep(650);
@@ -764,168 +860,210 @@ export default function Console() {
   return (
     <>
       <Background />
-      <main className="mx-auto w-full max-w-5xl px-4 py-10 sm:px-6 sm:py-12">
+      <main className={`mx-auto w-full max-w-5xl px-4 pt-8 sm:px-6 ${demo ? "pb-56" : "pb-16"}`}>
         {/* Header */}
-        <header className="mb-8 flex flex-wrap items-center justify-between gap-4">
+        <header className="mb-12 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <Shield className="h-9 w-9" />
             <div>
-              <h1 className="text-2xl font-semibold tracking-tight"><span className="grad-text">Aegis</span></h1>
+              <div className="text-xl font-semibold tracking-tight"><span className="grad-text">Aegis</span></div>
               <p className="text-xs text-neutral-400">A safety checkpoint for AI agents</p>
             </div>
           </div>
           <div className="flex items-center gap-2.5">
             {demo ? (
               <>
-                <span className="rounded-full border border-fuchsia-400/30 bg-fuchsia-400/10 px-2.5 py-1 text-[11px] font-medium text-fuchsia-300">DEMO · simulated</span>
+                <span className="rounded-full border border-fuchsia-400/30 bg-fuchsia-400/10 px-2.5 py-1 text-[11px] font-medium text-fuchsia-300">Demo · simulated</span>
                 <button onClick={exitDemo} className="rounded-full border border-white/15 bg-white/5 px-3.5 py-1.5 text-xs font-medium text-neutral-200 hover:bg-white/10">Exit demo</button>
               </>
-            ) : (
-              <>
-                <div className="glass flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs">
-                  <span className={`h-2 w-2 rounded-full ${reachable ? "pulse-dot bg-emerald-400" : "bg-rose-400"}`} />
-                  <span className="text-neutral-300">{reachable ? "Live" : "Console offline"}</span>
-                </div>
-                <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.97 }} onClick={runDemo} className="rounded-full bg-gradient-to-r from-indigo-500 via-sky-500 to-fuchsia-500 px-4 py-1.5 text-xs font-semibold text-white shadow-lg shadow-indigo-500/25">
-                  ▶ Run the Relay incident demo
-                </motion.button>
-              </>
+            ) : DEMO_ONLY ? null : (
+              <div className="glass flex items-center gap-2 rounded-full px-3.5 py-1.5 text-xs">
+                <span className={`h-2 w-2 rounded-full ${reachable ? "pulse-dot bg-emerald-400" : "bg-rose-400"}`} />
+                <span className="text-neutral-300">{reachable ? (approver ? "Live · you can approve" : "Live · view only") : "Console offline"}</span>
+              </div>
             )}
           </div>
         </header>
 
         {/* Hero */}
-        <section className="mb-8 max-w-2xl">
-          <h2 className="text-xl font-semibold leading-snug text-white sm:text-2xl">
-            Monitoring tells you what your agent did.
-            <br />
-            <span className="grad-text">Aegis decides what it&apos;s allowed to do.</span>
-          </h2>
-          <p className="mt-3 text-sm leading-relaxed text-neutral-400">
-            Aegis sits between an AI agent and its tools. Safe actions run instantly. Risky ones wait here for a human. The goal is to keep human involvement low, and only where it matters.
-          </p>
+        <section className="mb-16 grid items-center gap-10 lg:grid-cols-[1.15fr_1fr]">
+          <div>
+            <motion.span initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mb-5 inline-flex items-center gap-2 rounded-full border border-indigo-400/25 bg-indigo-400/10 px-3 py-1 text-xs text-indigo-200">
+              <span className="h-1.5 w-1.5 rounded-full bg-indigo-300" /> Runtime safety for AI agents
+            </motion.span>
+            <motion.h1 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="text-4xl font-semibold leading-[1.1] tracking-tight text-white sm:text-5xl">
+              Let AI agents act.
+              <br />
+              <span className="grad-text">Stay in charge of what matters.</span>
+            </motion.h1>
+            <motion.p initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }} className="mt-5 max-w-xl text-[15px] leading-relaxed text-neutral-400">
+              Aegis sits between an AI agent and the systems it touches. Safe actions run instantly. Risky ones wait for a human. Over time, it learns what you always approve and asks less.
+            </motion.p>
+            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="mt-7 flex flex-wrap gap-3">
+              <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={runDemo} className="rounded-full bg-gradient-to-r from-indigo-500 via-sky-500 to-fuchsia-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30">
+                ▶ Watch an agent handle an outage
+              </motion.button>
+              <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={runWeek} className="rounded-full border border-white/15 bg-white/5 px-5 py-2.5 text-sm font-medium text-neutral-100 hover:bg-white/10">
+                Simulate a week of earned trust
+              </motion.button>
+            </motion.div>
+            <p className="mt-4 text-xs text-neutral-500">Both demos take about a minute and run entirely in your browser. Nothing is sent or stored.</p>
+          </div>
+          <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.15 }}>
+            <LiveStream />
+          </motion.div>
         </section>
 
-        <FlowDiagram />
+        <HowItWorks />
 
-        {/* Demo narration */}
-        <AnimatePresence mode="wait">
-          {demo && narration && (
-            <motion.div key={narration.text} initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="mb-6 rounded-2xl border border-fuchsia-400/25 bg-fuchsia-400/[0.06] px-4 py-3 text-sm text-fuchsia-50">
-              <span className="mr-2 font-mono text-xs text-fuchsia-300">relay-oncall</span>
-              {narration.text}
-              {narration.hint && <span className="ml-2 font-medium text-amber-200">{narration.hint}</span>}
+        {/* The console */}
+        <section id="console" className="scroll-mt-6">
+          <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
+            <h2 className="text-xs font-medium uppercase tracking-[0.18em] text-neutral-500">The console</h2>
+            <span className="text-xs text-neutral-500">
+              {demo ? "Simulated incident. Your clicks are the human decisions." : DEMO_ONLY ? "Start a demo above to see it work." : "Connected to agents on this computer."}
+            </span>
+          </div>
+
+          {!demo && !DEMO_ONLY && reachable && approver === false && (
+            <div className="mb-6 rounded-2xl border border-sky-400/25 bg-sky-400/[0.06] px-4 py-3 text-sm text-sky-100">
+              <span className="font-medium">View only.</span> To approve or reject, open the approval link printed in the terminal where the console is running. This stops an agent from approving its own requests.
+            </div>
+          )}
+          {error && (
+            <div role="alert" className="mb-6 rounded-2xl border border-rose-400/30 bg-rose-400/[0.08] px-4 py-3 text-sm text-rose-100">
+              {error}
+            </div>
+          )}
+
+          {/* Pending */}
+          <div className="mb-10">
+            <h3 className="mb-4 flex items-center gap-2 text-sm font-medium text-neutral-300">
+              Waiting for you
+              <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs tabular-nums text-amber-300">{pending.length}</span>
+            </h3>
+            {pending.length === 0 ? (
+              <div className="glass rounded-2xl p-8 text-center text-sm text-neutral-500">
+                {demo ? (
+                  demoDone ? (
+                    <>
+                      Demo finished.{" "}
+                      <button onClick={demoKind === "week" ? runWeek : runDemo} className="font-medium text-sky-300 underline-offset-2 hover:underline">Run it again</button>
+                    </>
+                  ) : weekPaused ? (
+                    "The week is paused. Look at the suggestions below."
+                  ) : (
+                    "The agent is working. Anything risky will appear here."
+                  )
+                ) : DEMO_ONLY ? (
+                  <>Nothing yet. <button onClick={runDemo} className="font-medium text-sky-300 underline-offset-2 hover:underline">Watch an agent handle an outage</button>.</>
+                ) : !reachable ? (
+                  "Can't reach the console server. Connected agents are blocked until it's back."
+                ) : (
+                  <>
+                    Nothing needs a human right now.{" "}
+                    <button onClick={runDemo} className="font-medium text-sky-300 underline-offset-2 hover:underline">Run the demo</button> to see a real incident.
+                  </>
+                )}
+              </div>
+            ) : (
+              <ul className="space-y-3">
+                <AnimatePresence mode="popLayout">
+                  {pending.map((c) => (
+                    <PendingCard key={c.id} c={c} now={demo && demoKind === "week" ? (c.expiresAt ?? now) - 5 * 60_000 : now} busy={busy === c.id} canDecide={canDecide} onDecide={(d, p) => decide(c.id, d, p)} />
+                  ))}
+                </AnimatePresence>
+              </ul>
+            )}
+          </div>
+
+          {(demoKind === "week" || !demo) && (
+            <TrustPanel
+              suggestions={trustView.suggestions}
+              grants={trustView.grants}
+              canDecide={canDecide}
+              minApprovals={demo ? WEEK_MIN_APPROVALS : 5}
+              onGrant={grantTrust}
+              onRevoke={revokeTrust}
+              onSimulate={demo ? undefined : runWeek}
+            />
+          )}
+
+          {/* Metrics */}
+          {metrics && metrics.total > 0 && (
+            <div className="mb-10 grid grid-cols-1 gap-4 lg:grid-cols-[auto_1fr]">
+              <div className="glass flex items-center gap-5 rounded-2xl p-5">
+                <TrustRing rate={metrics.autoApproveRate} />
+                <div>
+                  <div className="text-sm font-medium text-white">Ran without a human</div>
+                  <div className="mt-1 text-xs text-neutral-400">{metrics.autoApproved} of {metrics.total} actions allowed by policy.</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                <Stat label="Needed a human" value={String(metrics.escalated)} hint={`${pct(metrics.interventionRate)} of actions`} accent="text-amber-300" />
+                <Stat label="Human said no" value={pct(metrics.vetoRate)} hint={`${metrics.rejected} rejected`} accent="text-rose-300" />
+                <Stat label="Time to decide" value={metrics.avgTimeToDecideMs ? `${(metrics.avgTimeToDecideMs / 1000).toFixed(1)}s` : "—"} hint="average" accent="text-sky-300" />
+                <div className="glass col-span-2 rounded-2xl p-4 sm:col-span-3">
+                  <div className="mb-3 text-[11px] font-medium uppercase tracking-wider text-neutral-400">Share of actions needing a human, over time</div>
+                  <TrendChart trend={metrics.trend} />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Activity */}
+          <div className="mb-16">
+            <h3 className="mb-4 text-sm font-medium text-neutral-300">Every action, on record</h3>
+            {activity.length === 0 ? (
+              <p className="text-sm text-neutral-500">No actions yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {activity.map((c) => (
+                  <ActivityRow key={c.id} c={c} />
+                ))}
+              </ul>
+            )}
+          </div>
+        </section>
+
+        <Features />
+
+        <footer className="border-t border-white/5 pt-6 text-center text-xs leading-relaxed text-neutral-600">
+          Aegis · autonomy where it&apos;s safe, people where it matters
+          <br />
+          This site uses no cookies, analytics or tracking. The demos run in your browser and nothing you do here is stored.
+        </footer>
+      </main>
+
+      {/* Demo guide */}
+      <AnimatePresence>
+        {demo && narration && (
+          <motion.div initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 80, opacity: 0 }} className="fixed inset-x-0 bottom-0 z-50 px-3 pb-3 sm:px-4 sm:pb-4">
+            <div role="status" className="mx-auto max-w-3xl rounded-2xl border border-fuchsia-400/30 bg-[#0e0b1a]/95 p-4 shadow-2xl shadow-fuchsia-900/30 backdrop-blur">
+              <div className="mb-2 flex items-center justify-between gap-3 text-[11px]">
+                <span className="font-mono text-fuchsia-300">
+                  relay-oncall · {demoKind === "week" ? `day ${progress.step} of ${progress.total}` : `step ${progress.step} of ${progress.total}`}
+                </span>
+                <button onClick={exitDemo} className="text-neutral-400 hover:text-white">Exit demo</button>
+              </div>
+              <div className="mb-3 h-1 overflow-hidden rounded-full bg-white/10">
+                <motion.div className="h-full rounded-full bg-gradient-to-r from-indigo-400 via-sky-400 to-fuchsia-400" animate={{ width: `${progress.total ? (progress.step / progress.total) * 100 : 0}%` }} transition={{ duration: 0.5 }} />
+              </div>
+              <AnimatePresence mode="wait">
+                <motion.p key={narration.text} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} className="text-sm leading-relaxed text-fuchsia-50">
+                  {narration.text}
+                  {narration.hint && <span className="ml-1.5 font-medium text-amber-200">{narration.hint}</span>}
+                </motion.p>
+              </AnimatePresence>
               {weekPaused && (
-                <button onClick={() => continueWeek.current?.()} className="ml-3 rounded-full border border-fuchsia-300/40 bg-fuchsia-400/15 px-3 py-1 text-xs font-medium text-fuchsia-100 hover:bg-fuchsia-400/25">
+                <button onClick={() => continueWeek.current?.()} className="mt-3 rounded-full border border-fuchsia-300/40 bg-fuchsia-400/15 px-3.5 py-1.5 text-xs font-medium text-fuchsia-100 hover:bg-fuchsia-400/25">
                   Continue the week →
                 </button>
               )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {!demo && reachable && approver === false && (
-          <div className="mb-6 rounded-2xl border border-sky-400/25 bg-sky-400/[0.06] px-4 py-3 text-sm text-sky-100">
-            <span className="font-medium">View only.</span> To approve or reject, open the approval link printed in the terminal where the console is running. This stops an agent from approving its own requests.
-          </div>
-        )}
-        {error && (
-          <div role="alert" className="mb-6 rounded-2xl border border-rose-400/30 bg-rose-400/[0.08] px-4 py-3 text-sm text-rose-100">
-            {error}
-          </div>
-        )}
-
-        {/* Pending */}
-        <section className="mb-10">
-          <h2 className="mb-4 flex items-center gap-2 text-sm font-medium text-neutral-300">
-            Waiting for you
-            <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs tabular-nums text-amber-300">{pending.length}</span>
-          </h2>
-          {pending.length === 0 ? (
-            <div className="glass rounded-2xl p-8 text-center text-sm text-neutral-500">
-              {demo ? (
-                demoDone ? (
-                  <>
-                    Demo finished.{" "}
-                    <button onClick={demoKind === "week" ? runWeek : runDemo} className="font-medium text-sky-300 underline-offset-2 hover:underline">Run it again</button>
-                  </>
-                ) : (
-                  "The agent is working. Anything risky will appear here."
-                )
-              ) : !reachable ? (
-                "Can't reach the console server. Connected agents are blocked until it's back."
-              ) : (
-                <>
-                  Nothing needs a human right now.{" "}
-                  <button onClick={runDemo} className="font-medium text-sky-300 underline-offset-2 hover:underline">Run the demo</button> to see a real incident.
-                </>
-              )}
             </div>
-          ) : (
-            <ul className="space-y-3">
-              <AnimatePresence mode="popLayout">
-                {pending.map((c) => (
-                  <PendingCard key={c.id} c={c} now={demo && demoKind === "week" ? (c.expiresAt ?? now) - 5 * 60_000 : now} busy={busy === c.id} canDecide={canDecide} onDecide={(d, p) => decide(c.id, d, p)} />
-                ))}
-              </AnimatePresence>
-            </ul>
-          )}
-        </section>
-
-        {(demoKind === "week" || !demo) && (
-          <TrustPanel
-            suggestions={trustView.suggestions}
-            grants={trustView.grants}
-            canDecide={canDecide}
-            minApprovals={demo ? WEEK_MIN_APPROVALS : 5}
-            onGrant={grantTrust}
-            onRevoke={revokeTrust}
-            onSimulate={demo ? undefined : runWeek}
-          />
+          </motion.div>
         )}
-
-        {/* Metrics */}
-        {metrics && metrics.total > 0 && (
-          <section className="mb-10 grid grid-cols-1 gap-4 lg:grid-cols-[auto_1fr]">
-            <div className="glass flex items-center gap-5 rounded-2xl p-5">
-              <TrustRing rate={metrics.autoApproveRate} />
-              <div>
-                <div className="text-sm font-medium text-white">Ran without a human</div>
-                <div className="mt-1 text-xs text-neutral-400">{metrics.autoApproved} of {metrics.total} actions allowed by policy.</div>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-              <Stat label="Needed a human" value={String(metrics.escalated)} hint={`${pct(metrics.interventionRate)} of actions`} accent="text-amber-300" />
-              <Stat label="Human said no" value={pct(metrics.vetoRate)} hint={`${metrics.rejected} rejected`} accent="text-rose-300" />
-              <Stat label="Time to decide" value={metrics.avgTimeToDecideMs ? `${(metrics.avgTimeToDecideMs / 1000).toFixed(1)}s` : "—"} hint="average" accent="text-sky-300" />
-              <div className="glass col-span-2 rounded-2xl p-4 sm:col-span-3">
-                <div className="mb-3 text-[11px] font-medium uppercase tracking-wider text-neutral-400">Share of actions needing a human, over time</div>
-                <TrendChart trend={metrics.trend} />
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* Activity */}
-        <section className="mb-10">
-          <h2 className="mb-4 text-sm font-medium text-neutral-300">Every action, on record</h2>
-          {activity.length === 0 ? (
-            <p className="text-sm text-neutral-500">No actions yet.</p>
-          ) : (
-            <ul className="space-y-2">
-              {activity.map((c) => (
-                <ActivityRow key={c.id} c={c} />
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <ConnectAgent />
-
-        <footer className="mt-14 border-t border-white/5 pt-6 text-center text-xs text-neutral-600">
-          Aegis · autonomy where it&apos;s safe, people where it matters
-        </footer>
-      </main>
+      </AnimatePresence>
     </>
   );
 }

@@ -127,3 +127,16 @@ The console's approve button called an API with no login, so a coding agent that
 **Changed:** The request schema moved into `core/` with a regression test.
 **Lesson:** Test across boundaries, not just the pieces. Schemas that quietly drop unknown fields hide this kind of bug.
 
+## 025 · The public website is demo-only
+**Chose:** When built for Vercel, the live API is switched off (returns 404) and only the two in-browser demos run. No cookies, analytics or third-party scripts.
+**Instead of:** Hosting a live console anyone on the internet could send actions to.
+**Why:** The public site's job is to show Aegis, not to run it. With no server state, there's nothing to attack or leak.
+
+## 026 · The local console only talks to this computer
+**Chose:** Listen on `127.0.0.1`; reject API requests not addressed to `localhost` (DNS rebinding) and state changes from other websites.
+**Why:** Before this, anyone on the same Wi-Fi could open the console. Found in a security review.
+
+## 027 · Security headers and patched dependencies
+**Chose:** A strict Content-Security-Policy (everything from this site only), no framing, no referrer, HTTPS-only in production. Upgraded Next.js 16.2.9 → 16.3.8 to fix a critical advisory; `npm audit` reports 0 vulnerabilities.
+**Why:** A safety product should pass a basic security review of its own. See SECURITY.md.
+
