@@ -4,22 +4,43 @@
 //   1. Strictest wins. If any matching rule says escalate, it escalates,
 //      no matter what order the rules are in.
 //   2. No matching rule means escalate. Unknown actions go to a human.
+// Plus one safety net: if a rule's `when` check crashes, a human decides.
 
-import { checkCondition, matchesPattern, parseCondition } from "./match";
+import { matchesPattern } from "./match";
 import type { Action, Policy, Rule, Verdict } from "./types";
 
-function ruleMatches(rule: Rule, action: Action): boolean {
+type RuleResult = "match" | "no-match" | "error";
+
+function checkRule(rule: Rule, action: Action): RuleResult {
   const m = rule.match ?? {};
-  if (m.agent && !matchesPattern(m.agent, action.agent)) return false;
-  if (m.tool && !matchesPattern(m.tool, action.tool)) return false;
-  if (m.target && !matchesPattern(m.target, action.target)) return false;
-  if (m.environment && !matchesPattern(m.environment, action.environment)) return false;
-  if (rule.when && !checkCondition(parseCondition(rule.when), action.params)) return false;
-  return true;
+  if (m.agent && !matchesPattern(m.agent, action.agent)) return "no-match";
+  if (m.tool && !matchesPattern(m.tool, action.tool)) return "no-match";
+  if (m.target && !matchesPattern(m.target, action.target)) return "no-match";
+  if (m.environment && !matchesPattern(m.environment, action.environment)) return "no-match";
+  if (rule.when) {
+    try {
+      if (rule.when(action.params ?? {}) !== true) return "no-match";
+    } catch {
+      return "error";
+    }
+  }
+  return "match";
 }
 
+const quote = (rules: Rule[]) => rules.map((r) => `"${r.name}"`).join(", ");
+
 export function evaluate(action: Action, policy: Policy): Verdict {
-  const matched = policy.rules.filter((r) => ruleMatches(r, action));
+  const results = policy.rules.map((rule) => ({ rule, result: checkRule(rule, action) }));
+  const matched = results.filter((r) => r.result === "match").map((r) => r.rule);
+  const broken = results.filter((r) => r.result === "error").map((r) => r.rule);
+
+  if (broken.length > 0) {
+    return {
+      decision: "escalate",
+      matchedRules: matched.map((r) => r.name),
+      explanation: `A rule crashed while checking this action (${quote(broken)}), so a human decides.`,
+    };
+  }
 
   if (matched.length === 0) {
     return {
@@ -34,13 +55,13 @@ export function evaluate(action: Action, policy: Policy): Verdict {
     return {
       decision: "escalate",
       matchedRules: matched.map((r) => r.name),
-      explanation: `Needs a human: ${escalating.map((r) => `"${r.name}"`).join(", ")}.`,
+      explanation: `Needs a human: ${quote(escalating)}.`,
     };
   }
 
   return {
     decision: "allow",
     matchedRules: matched.map((r) => r.name),
-    explanation: `Allowed by ${matched.map((r) => `"${r.name}"`).join(", ")}.`,
+    explanation: `Allowed by ${quote(matched)}.`,
   };
 }

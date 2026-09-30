@@ -1,10 +1,10 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { evaluate } from "./evaluate";
-import { loadPolicy, parsePolicy } from "./policy";
-import type { Action } from "./types";
+import relay from "../policies/relay";
+import { definePolicy, loadPolicy } from "./policy";
+import type { Action, Policy } from "./types";
 
-const relay = loadPolicy(join(import.meta.dirname, "../policies/relay.yaml"));
 const decide = (a: Omit<Action, "agent">) => evaluate({ agent: "relay-oncall", ...a }, relay);
 
 describe("Relay policy: the incidents from the customer brief", () => {
@@ -127,45 +127,72 @@ describe("Safe defaults: when in doubt, ask a human", () => {
   });
 });
 
-describe("Policy file validation: typos fail loudly", () => {
+describe("Policy validation: mistakes fail loudly", () => {
+  // The "ts-expect-error" lines prove TypeScript catches these while you type.
+  // The runtime checks catch them anyway, e.g. in a plain JavaScript policy.
+
   it("rejects a misspelled field instead of ignoring it", () => {
     // Ignoring "enviroment" would turn "allow in staging" into "allow everywhere".
-    const yaml = `
-rules:
-  - name: Staging is free
-    match: { enviroment: staging }
-    decision: allow
-`;
-    expect(() => parsePolicy(yaml)).toThrow(/invalid/i);
+    expect(() =>
+      definePolicy({
+        // @ts-expect-error misspelled on purpose
+        rules: [{ name: "Staging is free", match: { enviroment: "staging" }, decision: "allow" }],
+      }),
+    ).toThrow(/invalid/i);
   });
 
   it("rejects a rule that matches everything", () => {
-    const yaml = `
-rules:
-  - name: Allow all
-    decision: allow
-`;
-    expect(() => parsePolicy(yaml)).toThrow(/matches everything/);
+    expect(() => definePolicy({ rules: [{ name: "Allow all", decision: "allow" }] })).toThrow(
+      /matches everything/,
+    );
   });
 
   it("rejects a decision other than allow or escalate", () => {
-    const yaml = `
-rules:
-  - name: Block deletes
-    match: { tool: drop_table }
-    decision: deny
-`;
-    expect(() => parsePolicy(yaml)).toThrow(/invalid/i);
+    expect(() =>
+      definePolicy({
+        // @ts-expect-error "deny" is not an outcome (decision 004)
+        rules: [{ name: "Block deletes", match: { tool: "drop_table" }, decision: "deny" }],
+      }),
+    ).toThrow(/invalid/i);
   });
 
-  it("rejects a condition it can't read", () => {
-    const yaml = `
-rules:
-  - name: Sneaky
-    match: { tool: scale_service }
-    when: "process.exit() || true"
-    decision: allow
-`;
-    expect(() => parsePolicy(yaml)).toThrow(/condition/);
+  it("rejects a `when` that isn't a function", () => {
+    expect(() =>
+      definePolicy({
+        // @ts-expect-error a string condition was the old YAML style
+        rules: [{ name: "Old style", match: { tool: "scale_service" }, when: "params.replicas <= 5", decision: "allow" }],
+      }),
+    ).toThrow(/function/);
+  });
+
+  it("loads a policy file from a path", async () => {
+    const loaded = await loadPolicy(join(import.meta.dirname, "../policies/relay.ts"));
+    expect(loaded.rules.length).toBe(relay.rules.length);
+  });
+});
+
+describe("Code-specific risks", () => {
+  it("does not let JavaScript treat '5' or null as the number 5", () => {
+    const scale = (replicas: unknown) =>
+      decide({ tool: "scale_service", target: "api-server", environment: "production", params: { replicas } });
+    expect(scale("5").decision).toBe("escalate");
+    expect(scale(null).decision).toBe("escalate");
+  });
+
+  it("escalates when a rule's check crashes, even if another rule allows", () => {
+    const fragile: Policy = definePolicy({
+      rules: [
+        { name: "Reads are fine", match: { tool: "read_logs" }, decision: "allow" },
+        {
+          name: "Buggy rule",
+          match: { tool: "read_logs" },
+          when: (p) => p.options.verbose === true, // crashes: p.options is undefined
+          decision: "allow",
+        },
+      ],
+    });
+    const v = evaluate({ agent: "a", tool: "read_logs" }, fragile);
+    expect(v.decision).toBe("escalate");
+    expect(v.explanation).toMatch(/crashed/);
   });
 });

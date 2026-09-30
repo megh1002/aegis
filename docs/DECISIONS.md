@@ -34,8 +34,18 @@ One entry per decision: what we chose, what we didn't, and why.
 **Instead of:** Allowing them (how Relay's outage happened) or blocking them (the agent gets stuck).
 **Why:** Safe by default, and the approvals on unknown actions later tell Aegis which new rules to suggest (M4).
 
-## 007 · Policies are YAML files, validated strictly
+## 007 · Policies are YAML files, validated strictly *(replaced by 008)*
 **Chose:** YAML, rejected on any unknown field, bad condition or catch-all rule.
 **Instead of:** TypeScript code.
 **Why:** Non-engineers like Relay's Head of Platform can read and review it. Strict validation matters because a typo like "enviroment" would otherwise be ignored and turn "allow in staging" into "allow everywhere." Conditions are parsed, never run as code, so the file can't execute anything.
+
+## 008 · Policies are TypeScript, not YAML
+**Chose:** A typed list of rules in a `.ts` file, wrapped in `definePolicy()`. Conditions are small functions, e.g. `(p) => p.replicas <= 5`.
+**Instead of:** YAML (007), or one big `decide()` function.
+**Why:** The editor autocompletes rules and flags typos while typing. Conditions are real code instead of a mini-language Aegis has to parse. A rule list (not one function) keeps rule names, strictest-wins and rule-by-rule tests.
+**Trade-offs, and how we handle them:**
+- Non-programmers can't easily edit rules. Accepted: the people writing policies for agents are usually engineers.
+- A condition can crash. Handled: if any rule's check throws, the action escalates to a human.
+- JavaScript treats `"5" <= 5` and `null <= 5` as true. Handled: rules check the type first, and a test guards it.
+- Runtime validation stays, because policies may also be written in plain JavaScript without type checking.
 
