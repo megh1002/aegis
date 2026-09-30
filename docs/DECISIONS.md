@@ -81,6 +81,27 @@ One entry per decision: what we chose, what we didn't, and why.
 **Changed to:** "Changing a database needs a human", matching only tools that change something.
 **Lesson:** Strictest-wins makes escalate rules powerful, so they have to be precise. A test now guards it.
 
-## Open issue · An agent could approve its own request
-The console's approve button calls an API with no login. A coding agent that can run terminal commands could, in principle, call that API and approve itself. Fix planned for M3: approvals need a secret the agent can't read (or a login). Found while building M2; not yet fixed.
+## Open issue · An agent could approve its own request *(mostly fixed by 016)*
+The console's approve button called an API with no login, so a coding agent that can run terminal commands could approve itself. Found in M2, fixed in M3 below, with a remaining limit.
+
+## 016 · Approvals need a secret the agent doesn't have
+**Chose:** When the console starts, it makes a random secret and prints a link containing it in its own terminal (the way Jupyter notebooks do). Opening the link stores the secret in a browser cookie. Only requests with that cookie can approve or reject. Without it, the console is view-only.
+**Instead of:** No protection (M2), or a username and password (more setup, and a password could end up in a file the agent reads).
+**Details:** The secret is never written to disk. It's removed from the address bar after use. The cookie is `HttpOnly` (page scripts can't read it) and `SameSite=strict` (other websites can't use it). The check compares in constant time, so response timing can't leak the secret.
+**Remaining limit:** anything that can read the console's terminal output can still approve. On one machine where the agent runs as the same user, this reduces the risk; it doesn't remove it. The real fix is the team version, where approval happens on a different machine or phone.
+**Trade-off:** a new link after every console restart. Set `AEGIS_APPROVER_TOKEN` to keep one.
+
+## 017 · The audit log is append-only and tamper-evident
+**Chose:** Every event is one line in `.aegis/audit.jsonl`. Each line contains the hash of the line before it (a hash chain). `npm run audit:verify` checks the chain, and the console refuses to write onto a broken one. On restart, the console rebuilds its history from the log.
+**Instead of:** A plain database table, which can be edited silently.
+**Why:** Relay's compliance lead needs to *prove* who approved what. Tamper-*evident* means changes are detected, not prevented: someone could still delete the file. Sending log copies somewhere else would be the next step.
+
+## 018 · Humans can edit how much, not what or where
+**Chose:** A reviewer can change parameter values (e.g. replicas 12 → 5) before approving. They can't change the target or environment, add parameters, or change a number into text. The agent is told exactly what changed, and the record keeps both versions.
+**Instead of:** Approve-or-reject only, which forces a human to reject a mostly-right action and wait for the agent to try again.
+**Why:** It's what real operators do. Keeping target and environment fixed means an edit can never turn "scale the API" into "scale the database." The edited version isn't re-checked against the policy: the human is explicitly approving it.
+
+## 019 · The record includes what actually happened
+**Chose:** After an approved action runs, the proxy reports the outcome (success or failure plus a short summary), and it's added to the record once.
+**Why:** "Approved" isn't the same as "it worked." An audit answers both *who allowed it* and *what it did*.
 

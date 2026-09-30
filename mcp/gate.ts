@@ -1,13 +1,17 @@
 // A gate is where the proxy asks "may this action run?". The real one talks
 // to the Aegis console over HTTP. Tests use an in-memory one.
 
-import { CheckpointStore, type NewCheckpoint } from "../core/checkpoints";
+import { CheckpointStore, type Change, type Checkpoint, type NewCheckpoint } from "../core/checkpoints";
+import type { Params } from "../core/types";
 
 export interface GateResult {
   approved: boolean;
   // Shown to the agent when the action doesn't run.
   reason: string;
   checkpointId?: string;
+  // Set when a human approved a changed version: run these params instead.
+  params?: Params;
+  changes?: Change[];
 }
 
 export interface WaitOptions {
@@ -17,8 +21,15 @@ export interface WaitOptions {
   onWaiting?: (waitedMs: number) => void;
 }
 
+export interface ExecutionResult {
+  ok: boolean;
+  summary: string;
+}
+
 export interface Gate {
   submit(request: NewCheckpoint, options?: WaitOptions): Promise<GateResult>;
+  // After an approved action runs, record what happened.
+  reportResult(checkpointId: string, result: ExecutionResult): Promise<void>;
 }
 
 const sleep = (ms: number, signal?: AbortSignal) =>
@@ -26,6 +37,11 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     const t = setTimeout(resolve, ms);
     signal?.addEventListener("abort", () => (clearTimeout(t), resolve()), { once: true });
   });
+
+function finalResult(c: Pick<Checkpoint, "id" | "status" | "verdict" | "edit">): GateResult {
+  if (c.status !== "approved") return { approved: false, reason: explain(c.status, c.verdict.explanation), checkpointId: c.id };
+  return { approved: true, reason: c.verdict.explanation, checkpointId: c.id, params: c.edit?.params, changes: c.edit?.changes };
+}
 
 function explain(status: string, explanation: string): string {
   switch (status) {
@@ -55,7 +71,7 @@ export class ConsoleGate implements Gate {
 
     // Fail closed: if Aegis can't record the action, the action doesn't run.
     // No record means no oversight, even for actions the policy allows.
-    let created: { checkpoint: { id: string; status: string; verdict: { explanation: string } } };
+    let created: { checkpoint: Checkpoint };
     try {
       const res = await fetch(`${this.baseUrl}/api/checkpoints`, {
         method: "POST",
@@ -92,33 +108,50 @@ export class ConsoleGate implements Gate {
       }
     }
 
-    return checkpoint.status === "approved"
-      ? { approved: true, reason: checkpoint.verdict.explanation, checkpointId: checkpoint.id }
-      : { approved: false, reason: explain(checkpoint.status, checkpoint.verdict.explanation), checkpointId: checkpoint.id };
+    return finalResult(checkpoint);
+  }
+
+  async reportResult(checkpointId: string, result: ExecutionResult) {
+    try {
+      await fetch(`${this.baseUrl}/api/checkpoints/${checkpointId}/result`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(result),
+      });
+    } catch {
+      // The action already ran; a missing result note must not break the agent.
+    }
   }
 }
 
 /* ---------- an in-memory gate, for tests ---------- */
 
+export type HumanAnswer = "approved" | "rejected" | "no answer" | { approvedWith: Params };
+
 export class MemoryGate implements Gate {
   constructor(
     public store = new CheckpointStore(),
     // Decides escalated checkpoints, standing in for a human.
-    private human: (id: string) => "approved" | "rejected" | "no answer" = () => "no answer",
+    private human: (c: Checkpoint) => HumanAnswer = () => "no answer",
   ) {}
 
   async submit(request: NewCheckpoint): Promise<GateResult> {
     const { checkpoint } = this.store.create(request);
     if (checkpoint.status === "pending") {
-      const answer = this.human(checkpoint.id);
+      const answer = this.human(checkpoint);
       if (answer === "no answer") {
         return { approved: false, reason: explain("expired", checkpoint.verdict.explanation), checkpointId: checkpoint.id };
       }
-      this.store.decide(checkpoint.id, answer);
+      const result =
+        typeof answer === "string"
+          ? this.store.decide(checkpoint.id, answer)
+          : this.store.decide(checkpoint.id, "approved", answer.approvedWith);
+      if (!result.ok) throw new Error(result.error);
     }
-    const final = this.store.get(checkpoint.id)!;
-    return final.status === "approved"
-      ? { approved: true, reason: final.verdict.explanation, checkpointId: final.id }
-      : { approved: false, reason: explain(final.status, final.verdict.explanation), checkpointId: final.id };
+    return finalResult(this.store.get(checkpoint.id)!);
+  }
+
+  async reportResult(checkpointId: string, result: ExecutionResult) {
+    this.store.recordResult(checkpointId, result);
   }
 }

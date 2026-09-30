@@ -2,7 +2,8 @@
 // said, and what a human decided. Pure logic with no web or file code, so
 // the console, the proxy's tests and the demo all share one implementation.
 
-import type { Action, Verdict } from "./types";
+import { IDENTITY_KEYS } from "./keys";
+import type { Action, Params, Verdict } from "./types";
 
 export type Status = "pending" | "approved" | "rejected" | "expired";
 export type DecidedBy = "policy" | "human" | "timeout";
@@ -21,7 +22,20 @@ export interface Checkpoint {
   fingerprint: string;
   // Set when this looks like a repeat of an action that just ran.
   duplicateOf?: string;
+  // A human approved a changed version (e.g. 20 servers became 5).
+  // `action.params` stays as the agent asked; `edit.params` is what ran.
+  edit?: { params: Params; changes: Change[] };
+  // What happened when the approved action actually ran.
+  execution?: { ok: boolean; summary: string; at: number };
 }
+
+export interface Change {
+  key: string;
+  from: unknown;
+  to: unknown;
+}
+
+export type CheckpointEvent = "created" | "decided" | "expired" | "executed";
 
 export interface NewCheckpoint {
   action: Action;
@@ -61,10 +75,46 @@ export function fingerprintOf(a: Action): string {
 
 const secondsAgo = (ms: number) => `${Math.max(1, Math.round(ms / 1000))}s ago`;
 
+// Check a human's edit: same keys, same types, and never the target or
+// environment. Editing changes *how much*, not *what* or *where*.
+export function validateEdit(original: Params, edited: Params): { ok: true; changes: Change[] } | { ok: false; error: string } {
+  const changes: Change[] = [];
+  for (const key of Object.keys(edited)) {
+    if (!(key in original)) return { ok: false, error: `"${key}" isn't a parameter of this action` };
+  }
+  for (const [key, from] of Object.entries(original)) {
+    const to = key in edited ? edited[key] : from;
+    if (JSON.stringify(to) === JSON.stringify(from)) continue;
+    if (IDENTITY_KEYS.has(key)) return { ok: false, error: `"${key}" can't be edited: approve or reject the action as asked` };
+    if (typeof to !== typeof from || (to === null) !== (from === null)) {
+      return { ok: false, error: `"${key}" must stay a ${from === null ? "null" : typeof from}` };
+    }
+    changes.push({ key, from, to });
+  }
+  return { ok: true, changes };
+}
+
+type Listener = (event: CheckpointEvent, checkpoint: Checkpoint) => void;
+
 export class CheckpointStore {
   private items = new Map<string, Checkpoint>();
+  private listeners: Listener[] = [];
 
   constructor(private now: () => number = Date.now) {}
+
+  // Called on every change, e.g. to write the audit log.
+  onEvent(listener: Listener) {
+    this.listeners.push(listener);
+  }
+
+  private emit(event: CheckpointEvent, c: Checkpoint) {
+    for (const l of this.listeners) l(event, structuredClone(c));
+  }
+
+  // Load checkpoints saved earlier (e.g. replayed from the audit log).
+  restore(checkpoints: Checkpoint[]) {
+    for (const c of checkpoints) this.items.set(c.id, structuredClone(c));
+  }
 
   // Returns the checkpoint and whether it joined one already waiting.
   create(input: NewCheckpoint): { checkpoint: Checkpoint; joined: boolean } {
@@ -114,6 +164,7 @@ export class CheckpointStore {
     };
     this.items.set(checkpoint.id, checkpoint);
     this.trim();
+    this.emit("created", checkpoint);
     return { checkpoint, joined: false };
   }
 
@@ -133,16 +184,33 @@ export class CheckpointStore {
   decide(
     id: string,
     decision: "approved" | "rejected",
+    edited?: Params,
   ): { ok: true; checkpoint: Checkpoint } | { ok: false; error: string; checkpoint?: Checkpoint } {
     const c = this.get(id);
     if (!c) return { ok: false, error: "not found" };
     if (c.status !== "pending") {
       return { ok: false, error: `already ${c.status}`, checkpoint: c };
     }
+    if (edited && decision === "approved") {
+      const original = c.action.params ?? {};
+      const check = validateEdit(original, edited);
+      if (!check.ok) return { ok: false, error: check.error, checkpoint: c };
+      if (check.changes.length > 0) c.edit = { params: { ...original, ...edited }, changes: check.changes };
+    }
     c.status = decision;
     c.decidedBy = "human";
     c.decidedAt = this.now();
+    this.emit("decided", c);
     return { ok: true, checkpoint: c };
+  }
+
+  // The proxy reports back once an approved action has actually run.
+  recordResult(id: string, result: { ok: boolean; summary: string }): boolean {
+    const c = this.get(id);
+    if (!c || c.status !== "approved" || c.execution) return false;
+    c.execution = { ok: result.ok, summary: result.summary.slice(0, 500), at: this.now() };
+    this.emit("executed", c);
+    return true;
   }
 
   private expireIfDue(c: Checkpoint) {
@@ -150,6 +218,7 @@ export class CheckpointStore {
       c.status = "expired";
       c.decidedBy = "timeout";
       c.decidedAt = c.expiresAt;
+      this.emit("expired", c);
     }
   }
 

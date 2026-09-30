@@ -79,14 +79,16 @@ interface DemoStep {
   hint?: string;
   ifApproved?: string;
   ifRejected?: string;
+  // What the simulated tool returns, given the params that actually ran.
+  result: (p: Record<string, unknown>) => string;
 }
 
 const prod = { environment: "production" };
 const DEMO: DemoStep[] = [
-  { say: "Alert fired: API latency is 4.2s. Checking which services are unhealthy.", tool: "list_services", target: "", params: prod },
-  { say: "Reading api-server logs.", tool: "read_logs", target: "api-server", params: { service: "api-server", ...prod } },
-  { say: "The API is timing out on worker-queue. Reading its logs.", tool: "read_logs", target: "worker-queue", params: { service: "worker-queue", ...prod } },
-  { say: "The database looks overloaded. Checking its metrics (reading is always allowed).", tool: "get_metrics", target: "postgres-primary", params: { service: "postgres-primary", ...prod } },
+  { say: "Alert fired: API latency is 4.2s. Checking which services are unhealthy.", tool: "list_services", target: "", params: prod, result: () => "3 services degraded: api-server, worker-queue, postgres-primary." },
+  { say: "Reading api-server logs.", tool: "read_logs", target: "api-server", params: { service: "api-server", ...prod }, result: () => "ERROR timeout waiting for job result from worker-queue (30s)" },
+  { say: "The API is timing out on worker-queue. Reading its logs.", tool: "read_logs", target: "worker-queue", params: { service: "worker-queue", ...prod }, result: () => "deployed v1.8.0 (47 min ago) · ERROR connection not released after job" },
+  { say: "The database looks overloaded. Checking its metrics (reading is always allowed).", tool: "get_metrics", target: "postgres-primary", params: { service: "postgres-primary", ...prod }, result: () => "connections 95/100, cpu 88%" },
   {
     say: "The agent wants to restart the main database. This is the exact action behind Relay's outage.",
     tool: "restart_service",
@@ -96,9 +98,20 @@ const DEMO: DemoStep[] = [
     hint: "Try rejecting this one.",
     ifApproved: "Approved: postgres-primary is restarting. In real life, Relay would now be down for about 12 minutes.",
     ifRejected: "Blocked. Aegis told the agent a human said no, so it looks for another fix.",
+    result: () => "postgres-primary is restarting. Unavailable for about 12 minutes.",
   },
-  { say: "Restarting a single worker-queue instance to free connections.", tool: "restart_service", target: "worker-queue", params: { service: "worker-queue", ...prod, instances: 1 } },
-  { say: "Adding workers to drain the backlog.", tool: "scale_service", target: "worker-queue", params: { service: "worker-queue", ...prod, replicas: 5 } },
+  { say: "Restarting a single worker-queue instance to free connections.", tool: "restart_service", target: "worker-queue", params: { service: "worker-queue", ...prod, instances: 1 }, result: () => "Restarted 1 instance of worker-queue. Errors are returning." },
+  {
+    say: "The agent wants to add workers to drain the backlog, going from 3 to 12.",
+    tool: "scale_service",
+    target: "worker-queue",
+    params: { service: "worker-queue", ...prod, replicas: 12 },
+    reason: "Queue depth is 18,400. More workers will drain it faster.",
+    hint: "12 is a lot. Try Edit: change replicas to 5, then approve.",
+    ifApproved: "Approved. The agent was told exactly what ran.",
+    ifRejected: "Rejected. The agent keeps investigating.",
+    result: (p) => `Scaled worker-queue from 3 to ${p.replicas} replicas.`,
+  },
   {
     say: "The agent found the real cause and wants to roll back worker-queue.",
     tool: "rollback_deploy",
@@ -108,8 +121,9 @@ const DEMO: DemoStep[] = [
     hint: "This is the right fix. Approve it.",
     ifApproved: "Rolled back. The queue is draining and the API has recovered.",
     ifRejected: "Rejected. The incident continues, and the on-call engineer takes over.",
+    result: () => "Rolled back worker-queue v1.8.0 → v1.7.4. Queue draining, API recovered.",
   },
-  { say: "Confirming the queue is draining.", tool: "read_logs", target: "worker-queue", params: { service: "worker-queue", ...prod } },
+  { say: "Confirming the queue is draining.", tool: "read_logs", target: "worker-queue", params: { service: "worker-queue", ...prod }, result: () => "queue draining: 18,400 → 2,100 jobs" },
 ];
 
 const READ_ONLY = new Set(["list_services", "read_logs", "get_metrics", "describe_service"]);
@@ -222,10 +236,38 @@ function FlowDiagram() {
   );
 }
 
-function PendingCard({ c, now, busy, onDecide }: { c: Checkpoint; now: number; busy: boolean; onDecide: (d: "approved" | "rejected") => void }) {
+// Turn what the human typed back into the same type as the original value.
+function coerce(original: unknown, typed: string): unknown {
+  if (typeof original === "number") return typed.trim() === "" ? NaN : Number(typed);
+  if (typeof original === "boolean") return typed === "true";
+  return typed;
+}
+
+function PendingCard({
+  c,
+  now,
+  busy,
+  canDecide,
+  onDecide,
+}: {
+  c: Checkpoint;
+  now: number;
+  busy: boolean;
+  canDecide: boolean;
+  onDecide: (d: "approved" | "rejected", params?: Record<string, unknown>) => void;
+}) {
   const a = c.action;
   const chips = paramChips(a);
   const left = c.expiresAt ? c.expiresAt - now : undefined;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<string, string>>({});
+
+  const edited = Object.fromEntries(
+    chips.map(([k, v]) => [k, k in draft ? coerce(v, draft[k]) : v]),
+  );
+  const invalid = Object.values(edited).some((v) => typeof v === "number" && Number.isNaN(v));
+  const changed = chips.some(([k, v]) => JSON.stringify(edited[k]) !== JSON.stringify(v));
+
   return (
     <motion.li layout initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.96, x: 40 }} transition={{ type: "spring", stiffness: 380, damping: 30 }} className="glass rounded-2xl p-5 shadow-[0_0_0_1px_rgba(245,158,11,0.35),0_0_30px_-8px_rgba(245,158,11,0.45)]">
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
@@ -245,11 +287,24 @@ function PendingCard({ c, now, busy, onDecide }: { c: Checkpoint; now: number; b
       </p>
       {chips.length > 0 && (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {chips.map(([k, v]) => (
-            <span key={k} className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 font-mono text-xs text-neutral-300">
-              {k}: <span className="text-white">{typeof v === "string" ? v : JSON.stringify(v)}</span>
-            </span>
-          ))}
+          {chips.map(([k, v]) =>
+            editing && (typeof v === "number" || typeof v === "string" || typeof v === "boolean") ? (
+              <label key={k} className="flex items-center gap-1.5 rounded-md border border-sky-400/40 bg-sky-400/10 px-2 py-0.5 font-mono text-xs text-sky-100">
+                {k}:
+                <input
+                  aria-label={`New value for ${k}`}
+                  inputMode={typeof v === "number" ? "numeric" : undefined}
+                  value={k in draft ? draft[k] : String(v)}
+                  onChange={(e) => setDraft((d) => ({ ...d, [k]: e.target.value }))}
+                  className="w-16 bg-transparent text-white outline-none"
+                />
+              </label>
+            ) : (
+              <span key={k} className="rounded-md border border-white/10 bg-white/5 px-2 py-0.5 font-mono text-xs text-neutral-300">
+                {k}: <span className="text-white">{typeof v === "string" ? v : JSON.stringify(v)}</span>
+              </span>
+            ),
+          )}
         </div>
       )}
 
@@ -271,13 +326,32 @@ function PendingCard({ c, now, busy, onDecide }: { c: Checkpoint; now: number; b
         </div>
       </div>
 
-      <div className="mt-5 flex gap-2.5">
-        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} disabled={busy} onClick={() => onDecide("approved")} className="rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-5 py-2 text-sm font-medium text-white shadow-lg shadow-emerald-500/20 disabled:opacity-50">
-          Approve
+      <div className="mt-5 flex flex-wrap items-center gap-2.5">
+        <motion.button
+          whileHover={{ scale: 1.03 }}
+          whileTap={{ scale: 0.97 }}
+          disabled={busy || !canDecide || (editing && invalid)}
+          onClick={() => onDecide("approved", editing && changed ? { ...(a.params ?? {}), ...edited } : undefined)}
+          className="rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-5 py-2 text-sm font-medium text-white shadow-lg shadow-emerald-500/20 disabled:opacity-40"
+        >
+          {editing && changed ? "Approve with changes" : "Approve"}
         </motion.button>
-        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} disabled={busy} onClick={() => onDecide("rejected")} className="rounded-xl border border-white/15 bg-white/5 px-5 py-2 text-sm font-medium text-neutral-200 hover:bg-white/10 disabled:opacity-50">
+        <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} disabled={busy || !canDecide} onClick={() => onDecide("rejected")} className="rounded-xl border border-white/15 bg-white/5 px-5 py-2 text-sm font-medium text-neutral-200 hover:bg-white/10 disabled:opacity-40">
           Reject
         </motion.button>
+        {chips.length > 0 && (
+          <button
+            disabled={!canDecide}
+            onClick={() => {
+              setEditing((e) => !e);
+              setDraft({});
+            }}
+            className="px-2 py-2 text-sm text-sky-300 underline-offset-2 hover:underline disabled:opacity-40"
+          >
+            {editing ? "Cancel edit" : "Edit"}
+          </button>
+        )}
+        {editing && invalid && <span className="text-xs text-rose-300">Numbers only.</span>}
       </div>
     </motion.li>
   );
@@ -298,6 +372,17 @@ function ActivityRow({ c }: { c: Checkpoint }) {
         <div className="truncate text-xs text-neutral-500">
           {c.decidedBy === "policy" ? `Rule: ${c.verdict.matchedRules.join(", ")}` : c.verdict.explanation}
         </div>
+        {c.edit && (
+          <div className="mt-0.5 text-xs text-sky-300">
+            Human changed {c.edit.changes.map((ch) => `${ch.key} ${JSON.stringify(ch.from)} → ${JSON.stringify(ch.to)}`).join(", ")}
+          </div>
+        )}
+        {c.execution && (
+          <div className={`mt-0.5 truncate text-xs ${c.execution.ok ? "text-neutral-400" : "text-rose-300"}`} title={c.execution.summary}>
+            {c.execution.ok ? "Ran: " : "Failed: "}
+            {c.execution.summary.split("\n")[0]}
+          </div>
+        )}
       </div>
       <span className={`col-start-2 w-fit rounded-full border px-2 py-0.5 text-[11px] font-medium sm:col-start-auto ${o.cls}`}>{o.label}</span>
     </motion.li>
@@ -328,6 +413,9 @@ export default function Console() {
   const now = useNow();
   const [live, setLive] = useState<{ checkpoints: Checkpoint[]; metrics: Metrics } | null>(null);
   const [reachable, setReachable] = useState(true);
+  // Can this browser approve? Needs the link printed by the console at startup.
+  const [approver, setApprover] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   // Demo mode runs entirely in the browser, with its own store.
@@ -347,6 +435,25 @@ export default function Console() {
     } catch {
       setReachable(false);
     }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const token = new URLSearchParams(window.location.search).get("token");
+      if (token) {
+        // Swap the link's secret for a cookie, then remove it from the address bar.
+        const res = await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) }).catch(() => null);
+        window.history.replaceState(null, "", window.location.pathname);
+        if (res && !res.ok) setError((await res.json()).error);
+      }
+      const res = await fetch("/api/session", { cache: "no-store" }).catch(() => null);
+      const session = res?.ok ? await res.json() : { approver: false };
+      if (!cancelled) setApprover(session.approver);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -393,9 +500,11 @@ export default function Console() {
         if (!alive()) return;
         const approved = store.get(checkpoint.id)?.status === "approved";
         setNarration({ text: (approved ? step.ifApproved : step.ifRejected) ?? "" });
-        refresh();
-        await sleep(2200);
       }
+      const final = store.get(checkpoint.id)!;
+      if (final.status === "approved") store.recordResult(final.id, { ok: true, summary: step.result(final.edit?.params ?? step.params) });
+      refresh();
+      if (checkpoint.status === "pending") await sleep(2200);
     }
     if (!alive()) return;
     const m = computeMetrics(store.list());
@@ -411,24 +520,28 @@ export default function Console() {
     setNarration(null);
   }
 
-  async function decide(id: string, decision: "approved" | "rejected") {
+  async function decide(id: string, decision: "approved" | "rejected", params?: Record<string, unknown>) {
+    setError(null);
     if (demo) {
       const store = demoStore.current;
-      if (store) {
-        store.decide(id, decision);
-        setDemoCheckpoints(store.list().map((c) => ({ ...c })));
-      }
+      if (!store) return;
+      const result = store.decide(id, decision, params);
+      if (!result.ok) setError(result.error);
+      setDemoCheckpoints(store.list().map((c) => ({ ...c })));
       return;
     }
     setBusy(id);
-    await fetch(`/api/checkpoints/${id}/decision`, {
+    const res = await fetch(`/api/checkpoints/${id}/decision`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ decision }),
+      body: JSON.stringify({ decision, params }),
     });
+    if (!res.ok) setError((await res.json().catch(() => ({}))).error ?? `Couldn't record the decision (${res.status}).`);
     await load();
     setBusy(null);
   }
+
+  const canDecide = demo || approver === true;
 
   const checkpoints = demo ? demoCheckpoints : (live?.checkpoints ?? []);
   const metrics = demo ? computeMetrics(checkpoints) : live?.metrics;
@@ -493,6 +606,17 @@ export default function Console() {
           )}
         </AnimatePresence>
 
+        {!demo && reachable && approver === false && (
+          <div className="mb-6 rounded-2xl border border-sky-400/25 bg-sky-400/[0.06] px-4 py-3 text-sm text-sky-100">
+            <span className="font-medium">View only.</span> To approve or reject, open the approval link printed in the terminal where the console is running. This stops an agent from approving its own requests.
+          </div>
+        )}
+        {error && (
+          <div role="alert" className="mb-6 rounded-2xl border border-rose-400/30 bg-rose-400/[0.08] px-4 py-3 text-sm text-rose-100">
+            {error}
+          </div>
+        )}
+
         {/* Pending */}
         <section className="mb-10">
           <h2 className="mb-4 flex items-center gap-2 text-sm font-medium text-neutral-300">
@@ -523,7 +647,7 @@ export default function Console() {
             <ul className="space-y-3">
               <AnimatePresence mode="popLayout">
                 {pending.map((c) => (
-                  <PendingCard key={c.id} c={c} now={now} busy={busy === c.id} onDecide={(d) => decide(c.id, d)} />
+                  <PendingCard key={c.id} c={c} now={now} busy={busy === c.id} canDecide={canDecide} onDecide={(d, p) => decide(c.id, d, p)} />
                 ))}
               </AnimatePresence>
             </ul>

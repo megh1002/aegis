@@ -120,3 +120,53 @@ describe("Metrics", () => {
     expect(m.vetoRate).toBe(1);
   });
 });
+
+describe("Edit before approve", () => {
+  const held = () => {
+    const store = new CheckpointStore();
+    const { checkpoint } = store.create({ action: { ...scale, params: { ...scale.params, replicas: 20 } }, verdict: escalate });
+    return { store, id: checkpoint.id };
+  };
+
+  it("records what changed and keeps what the agent asked for", () => {
+    const { store, id } = held();
+    const r = store.decide(id, "approved", { replicas: 5 });
+    expect(r.ok).toBe(true);
+    const c = store.get(id)!;
+    expect(c.action.params?.replicas).toBe(20);
+    expect(c.edit?.params.replicas).toBe(5);
+    expect(c.edit?.changes).toEqual([{ key: "replicas", from: 20, to: 5 }]);
+  });
+
+  it("won't let an edit change what or where the action runs", () => {
+    const { store, id } = held();
+    expect(store.decide(id, "approved", { service: "postgres-primary" })).toMatchObject({ ok: false, error: /can't be edited/ });
+    expect(store.decide(id, "approved", { environment: "staging" })).toMatchObject({ ok: false });
+    expect(store.get(id)?.status).toBe("pending");
+  });
+
+  it("won't let an edit change a number into text or add new params", () => {
+    const { store, id } = held();
+    expect(store.decide(id, "approved", { replicas: "5" })).toMatchObject({ ok: false, error: /number/ });
+    expect(store.decide(id, "approved", { force: true })).toMatchObject({ ok: false, error: /isn't a parameter/ });
+  });
+
+  it("records no edit when nothing actually changed", () => {
+    const { store, id } = held();
+    store.decide(id, "approved", { replicas: 20 });
+    expect(store.get(id)?.edit).toBeUndefined();
+  });
+});
+
+describe("Execution results", () => {
+  it("records what happened once, and only for approved actions", () => {
+    const store = new CheckpointStore();
+    const ran = store.create({ action: scale, verdict: allow }).checkpoint;
+    expect(store.recordResult(ran.id, { ok: true, summary: "Scaled." })).toBe(true);
+    expect(store.recordResult(ran.id, { ok: false, summary: "Overwrite attempt" })).toBe(false);
+    expect(store.get(ran.id)?.execution?.summary).toBe("Scaled.");
+
+    const pending = store.create({ action: { ...scale, target: "x" }, verdict: escalate }).checkpoint;
+    expect(store.recordResult(pending.id, { ok: true, summary: "Never ran" })).toBe(false);
+  });
+});

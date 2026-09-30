@@ -31,6 +31,7 @@ import {
   type Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 import { evaluate } from "../core/evaluate";
+import { ENV_KEYS, TARGET_KEYS } from "../core/keys";
 import { loadPolicy } from "../core/load";
 import type { Action, Params, Policy } from "../core/types";
 import { ConsoleGate, type Gate } from "./gate";
@@ -39,9 +40,6 @@ import { ConsoleGate, type Gate } from "./gate";
 // Removed before the call reaches the real server.
 export const REASON_FIELD = "aegis_reason";
 
-// Common argument names that say *what* a tool acts on, and *where*.
-const TARGET_KEYS = ["target", "service", "resource", "name"];
-const ENV_KEYS = ["environment", "env"];
 
 export interface ProxyOptions {
   upstream: Client;
@@ -69,6 +67,10 @@ export function toAction(tool: string, rawArgs: Params, agent: string, defaultEn
     params,
     reason: typeof reason === "string" ? reason : undefined,
   };
+}
+
+function textOf(result: CallToolResult): string {
+  return result.content.map((c) => (c.type === "text" ? c.text : `[${c.type}]`)).join("\n");
 }
 
 function withReasonField(tool: Tool): Tool {
@@ -145,12 +147,34 @@ export function createAegisProxy(opts: ProxyOptions): Server {
       };
     }
 
-    const forwardArgs = { ...rawArgs };
+    // If a human approved a changed version, run that instead of what the agent asked.
+    const forwardArgs = { ...(result.params ?? rawArgs) };
     delete forwardArgs[REASON_FIELD];
-    return (await opts.upstream.callTool({ name, arguments: forwardArgs }, undefined, {
-      signal: extra.signal,
-      timeout: 5 * 60_000,
-    })) as CallToolResult;
+
+    let output: CallToolResult;
+    try {
+      output = (await opts.upstream.callTool({ name, arguments: forwardArgs }, undefined, {
+        signal: extra.signal,
+        timeout: 5 * 60_000,
+      })) as CallToolResult;
+    } catch (e) {
+      output = { content: [{ type: "text", text: `The tool failed: ${(e as Error).message}` }], isError: true };
+    }
+
+    if (result.checkpointId) {
+      void opts.gate.reportResult(result.checkpointId, { ok: !output.isError, summary: textOf(output) });
+    }
+
+    // Tell the agent plainly that what ran isn't exactly what it asked for.
+    if (result.changes?.length) {
+      const what = result.changes.map((c) => `${c.key}: ${JSON.stringify(c.from)} → ${JSON.stringify(c.to)}`).join(", ");
+      log(`EDITED   ${name} · ${what}`);
+      output = {
+        ...output,
+        content: [{ type: "text", text: `Note from Aegis: a human approved this with changes (${what}). The result below is for the changed version.` }, ...output.content],
+      };
+    }
+    return output;
   });
 
   return server;

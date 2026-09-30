@@ -4,7 +4,7 @@
 //
 // 1. Start the console:   npm run dev
 // 2. In another terminal: npm run simulate
-// 3. Approve or reject the held actions at http://localhost:3000
+// 3. Approve, edit or reject the held actions at http://localhost:3000
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -15,7 +15,7 @@ const steps: [string, Record<string, unknown>][] = [
   ["list_services", prod],
   ["read_logs", { service: "worker-queue", ...prod }],
   ["restart_service", { service: "postgres-primary", ...prod, instances: "all", aegis_reason: "Database is at 95/100 connections. Restarting all instances will clear them." }],
-  ["scale_service", { service: "worker-queue", ...prod, replicas: 5 }],
+  ["scale_service", { service: "worker-queue", ...prod, replicas: 12, aegis_reason: "Queue depth is 18,400. More workers will drain it faster." }],
   ["rollback_deploy", { service: "worker-queue", ...prod, aegis_reason: "v1.8.0 went out 47 minutes ago and its logs show a connection leak." }],
   ["list_services", prod],
 ];

@@ -16,6 +16,8 @@ Aegis is an [MCP](https://modelcontextprotocol.io) proxy. It looks like the tool
 - **Strictest rule wins, and unknown actions go to a human.**
 - **Fails closed.** If the console is unreachable, nothing runs.
 - **The same change can't run twice by accident.**
+- **Humans can edit before approving** (12 servers → 5), and the agent is told what changed.
+- **Tamper-evident audit log.** Every event is recorded in a hash chain in `.aegis/audit.jsonl`; check it with `npm run audit:verify`.
 
 > **Status:** work in progress (v2). See [docs/PLAN.md](docs/PLAN.md).
 
@@ -36,7 +38,9 @@ With the console running, in a second terminal:
 npm run simulate
 ```
 
-A scripted agent works the same incident through the real proxy and a simulated infrastructure server. Approve or reject the held actions in the console.
+A scripted agent works the same incident through the real proxy and a simulated infrastructure server.
+
+To approve, reject or edit held actions, open the **approval link** the console prints in its terminal when it starts. Without it, the console is view-only, so an agent can't approve its own requests.
 
 ## Connect Claude Code
 

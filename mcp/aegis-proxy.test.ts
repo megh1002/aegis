@@ -8,10 +8,11 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import relay from "../policies/relay";
 import { REASON_FIELD, createAegisProxy } from "./aegis-proxy";
-import { ConsoleGate, MemoryGate } from "./gate";
+import { ConsoleGate, MemoryGate, type HumanAnswer } from "./gate";
+import type { Checkpoint } from "../core/checkpoints";
 import { createRelayServer } from "./relay-infra-server";
 
-type Human = (id: string) => "approved" | "rejected" | "no answer";
+type Human = (c: Checkpoint) => HumanAnswer;
 
 async function setup(human: Human = () => "no answer") {
   // Wire 1: proxy <-> Relay infra
@@ -91,6 +92,23 @@ describe("Aegis proxy", () => {
     const again = await call("scale_service", args);
     expect(again.isError).toBe(true);
     expect(textOf(again)).toMatch(/duplicate/i);
+  });
+});
+
+describe("Edit before approve, and what happened", () => {
+  it("runs the human's edited version and tells the agent", async () => {
+    const { call, textOf } = await setup((c) => ({ approvedWith: { ...c.action.params, replicas: 5 } }));
+    const r = await call("scale_service", { service: "api-server", ...prod, replicas: 20 });
+    expect(r.isError).toBeFalsy();
+    expect(textOf(r)).toMatch(/approved this with changes \(replicas: 20 → 5\)/);
+    expect(textOf(r)).toMatch(/Scaled api-server from 4 to 5 replicas/);
+  });
+
+  it("records what actually happened after the action ran", async () => {
+    const { call, store } = await setup(() => "approved");
+    await call("rollback_deploy", { service: "worker-queue", ...prod });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(store.list()[0].execution).toMatchObject({ ok: true, summary: expect.stringMatching(/recovered/) });
   });
 });
 

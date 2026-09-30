@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
-    "simulate": "tsx scripts/simulate-incident.ts"
+    "simulate": "tsx scripts/simulate-incident.ts",
+    "audit:verify": "tsx scripts/verify-audit.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
