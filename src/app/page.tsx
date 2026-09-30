@@ -166,18 +166,20 @@ function Background() {
   return <div className="aegis-bg" />;
 }
 
-function Shield({ className = "" }: { className?: string }) {
+// The Aegis mark: a white shield with a check, on a rounded gradient tile.
+// Same drawing as src/app/icon.svg (the browser-tab icon).
+function Logo({ className = "" }: { className?: string }) {
   return (
-    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden>
+    <svg viewBox="0 0 32 32" className={className} aria-hidden>
       <defs>
-        <linearGradient id="sg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#a5b4fc" />
-          <stop offset="50%" stopColor="#67e8f9" />
-          <stop offset="100%" stopColor="#d8b4fe" />
+        <linearGradient id="aegis-tile" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#6366f1" />
+          <stop offset="100%" stopColor="#0ea5e9" />
         </linearGradient>
       </defs>
-      <path d="M12 2 4 5v6c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10V5l-8-3Z" stroke="url(#sg)" strokeWidth="1.5" strokeLinejoin="round" fill="rgba(129,140,248,0.12)" />
-      <path d="m8.5 12 2.3 2.3L16 9.6" stroke="url(#sg)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+      <rect width="32" height="32" rx="9" fill="url(#aegis-tile)" />
+      <path d="M16 6.5 9 9.2v5.6c0 4.6 3 8.1 7 9.7 4-1.6 7-5.1 7-9.7V9.2l-7-2.7Z" fill="none" stroke="white" strokeWidth="1.9" strokeLinejoin="round" />
+      <path d="m12.8 15.6 2.3 2.3 4.3-4.6" fill="none" stroke="white" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -778,10 +780,10 @@ export default function Console() {
         {/* Header */}
         <header className="mb-12 flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <Shield className="h-9 w-9" />
-            <div>
-              <div className="text-xl font-semibold tracking-tight"><span className="grad-text">Aegis</span></div>
-              <p className="text-xs text-neutral-400">A safety checkpoint for AI agents</p>
+            <Logo className="h-9 w-9 rounded-[10px] shadow-lg shadow-indigo-500/25" />
+            <div className="leading-tight">
+              <div className="text-[19px] font-semibold tracking-[-0.02em] text-white">Aegis</div>
+              <p className="text-[11px] tracking-wide text-neutral-500">Safety checkpoint for AI agents</p>
             </div>
           </div>
           <div className="flex items-center gap-2.5">
