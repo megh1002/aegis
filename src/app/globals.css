@@ -1,26 +1,142 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  background: #06070c;
+  color: #e5e7eb;
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ---------- Animated command-deck background ---------- */
+.aegis-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  overflow: hidden;
+  background:
+    radial-gradient(1200px 600px at 15% -10%, rgba(99, 102, 241, 0.18), transparent 60%),
+    radial-gradient(1000px 700px at 100% 0%, rgba(56, 189, 248, 0.12), transparent 55%),
+    radial-gradient(900px 900px at 80% 110%, rgba(168, 85, 247, 0.14), transparent 60%),
+    #06070c;
+}
+
+/* slow-drifting aurora blobs */
+.aegis-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  opacity: 0.5;
+  will-change: transform;
+}
+.aegis-blob.one {
+  width: 45vw;
+  height: 45vw;
+  left: -8vw;
+  top: -10vw;
+  background: rgba(99, 102, 241, 0.55);
+  animation: drift1 18s ease-in-out infinite;
+}
+.aegis-blob.two {
+  width: 40vw;
+  height: 40vw;
+  right: -6vw;
+  top: 4vw;
+  background: rgba(45, 212, 191, 0.4);
+  animation: drift2 22s ease-in-out infinite;
+}
+.aegis-blob.three {
+  width: 38vw;
+  height: 38vw;
+  left: 40vw;
+  bottom: -14vw;
+  background: rgba(168, 85, 247, 0.45);
+  animation: drift3 26s ease-in-out infinite;
+}
+
+@keyframes drift1 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(6vw, 5vw) scale(1.12); }
+}
+@keyframes drift2 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-5vw, 6vw) scale(1.08); }
+}
+@keyframes drift3 {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(-4vw, -6vw) scale(1.15); }
+}
+
+/* subtle grid overlay */
+.aegis-grid {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, #000 40%, transparent 100%);
+}
+
+/* ---------- Glass surface ---------- */
+.glass {
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(14px);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.06) inset,
+    0 20px 60px -30px rgba(0, 0, 0, 0.8);
+}
+.glass-hover {
+  transition: transform 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.glass-hover:hover {
+  transform: translateY(-3px);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.1) inset,
+    0 30px 70px -30px rgba(0, 0, 0, 0.9);
+}
+
+/* live status pulse */
+.pulse-dot {
+  position: relative;
+}
+.pulse-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: inherit;
+  animation: ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+@keyframes ping {
+  0% { transform: scale(1); opacity: 0.7; }
+  75%, 100% { transform: scale(2.6); opacity: 0; }
+}
+
+/* shimmering gradient text */
+.grad-text {
+  background: linear-gradient(90deg, #c7d2fe, #a5f3fc, #d8b4fe, #c7d2fe);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 6s linear infinite;
+}
+@keyframes shimmer {
+  to { background-position: 300% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aegis-blob,
+  .pulse-dot::after,
+  .grad-text {
+    animation: none !important;
+  }
 }
