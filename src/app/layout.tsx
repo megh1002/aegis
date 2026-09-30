@@ -12,10 +12,22 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const description =
+  "Aegis sits between an AI agent and its tools. Safe actions run on their own, risky ones wait for a person, and trust is earned over time. Try the one-minute demo.";
+
 export const metadata: Metadata = {
+  // Absolute links for the preview image when the site is shared.
+  metadataBase: new URL("https://loop-chi-plum.vercel.app"),
   title: "Aegis · A safety checkpoint for AI agents",
-  description:
-    "Aegis sits between an AI agent and its tools. Safe actions run instantly, risky ones wait for a human, and trust is earned over time.",
+  description,
+  openGraph: {
+    type: "website",
+    url: "/",
+    siteName: "Aegis",
+    title: "Aegis · A safety checkpoint for AI agents",
+    description,
+  },
+  twitter: { card: "summary_large_image", title: "Aegis · A safety checkpoint for AI agents", description },
 };
 
 export default function RootLayout({
