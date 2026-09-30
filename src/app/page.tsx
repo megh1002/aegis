@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { CheckpointStore, computeMetrics, type Checkpoint, type Metrics } from "../../core/checkpoints";
 import { evaluate } from "../../core/evaluate";
 import { applyTrust, describeLimits, describePattern, suggestTrust, type TrustGrant, type TrustSuggestion } from "../../core/trust";
-import type { Action, Verdict } from "../../core/types";
+import type { Action } from "../../core/types";
 import relayPolicy from "../../policies/relay";
 
 /* ---------- helpers ---------- */
@@ -163,16 +163,7 @@ const WEEK: WeekAction[][] = Array.from({ length: 7 }, (_, day) => (day === 4 ? 
 /* ---------- visual pieces ---------- */
 
 function Background() {
-  return (
-    <>
-      <div className="aegis-bg">
-        <div className="aegis-blob one" />
-        <div className="aegis-blob two" />
-        <div className="aegis-blob three" />
-      </div>
-      <div className="aegis-grid" />
-    </>
-  );
+  return <div className="aegis-bg" />;
 }
 
 function Shield({ className = "" }: { className?: string }) {
@@ -239,133 +230,53 @@ function TrendChart({ trend }: { trend: Metrics["trend"] }) {
   );
 }
 
-// Sample actions for the hero's live stream. Each badge comes from the real
-// rules engine and Relay's real policy, so what it shows is accurate.
-const STREAM: Action[] = [
+// A still example for the hero. Each badge comes from the real rules
+// engine and Relay's real policy, so what it shows is accurate.
+const EXAMPLE: Action[] = [
   { agent: "relay-oncall", tool: "read_logs", target: "api-server", environment: "production" },
   { agent: "relay-oncall", tool: "scale_service", target: "worker-queue", environment: "production", params: { replicas: 4 } },
   { agent: "relay-oncall", tool: "restart_service", target: "postgres-primary", environment: "production", params: { instances: "all" } },
-  { agent: "relay-oncall", tool: "get_metrics", target: "postgres-primary", environment: "production" },
-  { agent: "relay-oncall", tool: "rollback_deploy", target: "api-server", environment: "staging" },
-  { agent: "relay-oncall", tool: "scale_service", target: "api-server", environment: "production", params: { replicas: 20 } },
-  { agent: "relay-oncall", tool: "restart_service", target: "web-frontend", environment: "production", params: { instances: 1 } },
-  { agent: "relay-oncall", tool: "drop_table", target: "orders", environment: "staging" },
 ];
 
-function LiveStream() {
-  const [rows, setRows] = useState<{ id: number; action: Action; verdict: Verdict }[]>([]);
-  useEffect(() => {
-    let i = 0;
-    const tick = () => {
-      const action = STREAM[i % STREAM.length];
-      const row = { id: i, action, verdict: evaluate(action, relayPolicy) };
-      setRows((r) => [row, ...r].slice(0, 5));
-      i++;
-    };
-    const first = setTimeout(tick, 0);
-    const t = setInterval(tick, 1700);
-    return () => {
-      clearTimeout(first);
-      clearInterval(t);
-    };
-  }, []);
-
+function Example() {
   return (
-    <div className="glass relative overflow-hidden rounded-3xl p-4 sm:p-5">
-      <div className="mb-3 flex items-center justify-between text-xs">
-        <span className="flex items-center gap-2 font-mono text-neutral-400">
-          <span className="pulse-dot h-2 w-2 rounded-full bg-emerald-400" /> relay-oncall
-        </span>
-        <span className="text-neutral-500">every action, checked</span>
-      </div>
-      <ul className="space-y-2" aria-live="off">
-        <AnimatePresence initial={false}>
-          {rows.map(({ id, action, verdict }) => {
-            const held = verdict.decision === "escalate";
-            return (
-              <motion.li
-                key={id}
-                layout
-                initial={{ opacity: 0, y: -14, scale: 0.97 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ type: "spring", stiffness: 420, damping: 32 }}
-                className={`rounded-xl border px-3 py-2.5 ${held ? "border-amber-400/30 bg-amber-400/[0.06]" : "border-white/[0.07] bg-white/[0.03]"}`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate font-mono text-[12.5px] text-neutral-200">
-                    {action.tool}
-                    {action.target && <span className="text-neutral-500"> → {action.target}</span>}
-                  </span>
-                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${held ? "bg-amber-400/15 text-amber-200" : "bg-emerald-400/10 text-emerald-300"}`}>
-                    {held ? "held for a human" : "runs now"}
-                  </span>
-                </div>
-                <div className="mt-1 truncate text-[11px] text-neutral-500">
-                  {action.environment} · {held ? (verdict.escalatedBy?.[0] ?? "no rule covers this") : verdict.matchedRules[0]}
-                </div>
-              </motion.li>
-            );
-          })}
-        </AnimatePresence>
+    <div className="rounded-2xl border border-white/[0.08] bg-white/[0.02] p-4">
+      <div className="mb-3 text-xs text-neutral-500">Example: an on-call agent during an outage</div>
+      <ul className="space-y-2">
+        {EXAMPLE.map((action) => {
+          const held = evaluate(action, relayPolicy).decision === "escalate";
+          return (
+            <li key={action.tool + action.target} className="flex items-center justify-between gap-3 text-sm">
+              <span className="truncate font-mono text-[13px] text-neutral-300">
+                {action.tool} <span className="text-neutral-500">→ {action.target}</span>
+              </span>
+              <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs ${held ? "bg-amber-400/15 text-amber-200" : "bg-emerald-400/10 text-emerald-300"}`}>
+                {held ? "waits for you" : "runs now"}
+              </span>
+            </li>
+          );
+        })}
       </ul>
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#0b0c14] to-transparent" />
     </div>
   );
 }
 
 function HowItWorks() {
   const steps = [
-    { t: "The agent acts", d: "Claude Code, Cursor or your own agent calls a tool: restart a server, scale a service, run a query." },
-    { t: "Aegis checks your rules", d: "It looks at what will actually run, not what the agent says about it. Safe actions go straight through." },
-    { t: "You decide the risky few", d: "Approve, edit or reject in seconds. Everything is recorded, and trust grows as you approve." },
+    ["The agent acts", "It calls a tool: restart a server, scale a service, run a query."],
+    ["Aegis checks your rules", "Safe actions go straight through."],
+    ["You decide the risky few", "Approve, edit or reject. Trust grows as you approve."],
   ];
   return (
-    <section className="mb-14">
-      <h2 className="mb-5 text-xs font-medium uppercase tracking-[0.18em] text-neutral-500">How it works</h2>
-      <ol className="grid gap-3 sm:grid-cols-3">
-        {steps.map((s, i) => (
-          <motion.li key={s.t} initial={{ opacity: 0, y: 14 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.1 }} className="glass glass-hover relative rounded-2xl p-5">
-            <span className="mb-3 grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-indigo-500 to-sky-500 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30">{i + 1}</span>
-            <div className="text-[15px] font-medium text-white">{s.t}</div>
-            <p className="mt-1.5 text-sm leading-relaxed text-neutral-400">{s.d}</p>
-          </motion.li>
-        ))}
-      </ol>
-    </section>
-  );
-}
-
-function Icon({ d }: { d: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5" aria-hidden>
-      <path d={d} />
-    </svg>
-  );
-}
-
-function Features() {
-  const items = [
-    { icon: "M12 3 4 6v6c0 4.5 3.2 7.7 8 9 4.8-1.3 8-4.5 8-9V6l-8-3Z M9 12l2 2 4-4", t: "Judges facts, not opinions", d: "Rules see the exact tool, target and parameters. An agent calling its own action “low risk” changes nothing." },
-    { icon: "M7 11V8a5 5 0 0 1 10 0v3 M5 11h14v10H5z", t: "Fails closed", d: "If Aegis can’t be reached, nothing runs. No record means no action, even for safe ones." },
-    { icon: "M3 17l6-6 4 4 8-8 M14 7h7v7", t: "Earns trust, narrowly", d: "After repeated clean approvals it suggests letting that exact action run on its own. Hard lines, like database changes, never loosen." },
-    { icon: "M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1 M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1", t: "Tamper-evident record", d: "Every decision is chained together with hashes. Change one past line and verification points straight at it." },
-  ];
-  return (
-    <section className="mb-14">
-      <h2 className="mb-5 text-xs font-medium uppercase tracking-[0.18em] text-neutral-500">Why it&apos;s different</h2>
-      <div className="grid gap-3 sm:grid-cols-2">
-        {items.map((f, i) => (
-          <motion.div key={f.t} initial={{ opacity: 0, y: 14 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }} transition={{ delay: i * 0.08 }} className="glass glass-hover rounded-2xl p-5">
-            <div className="mb-3 grid h-9 w-9 place-items-center rounded-xl border border-indigo-400/25 bg-indigo-400/10 text-indigo-200">
-              <Icon d={f.icon} />
-            </div>
-            <div className="text-[15px] font-medium text-white">{f.t}</div>
-            <p className="mt-1.5 text-sm leading-relaxed text-neutral-400">{f.d}</p>
-          </motion.div>
-        ))}
-      </div>
-    </section>
+    <ol className="mb-16 grid gap-6 border-t border-white/[0.06] pt-8 sm:grid-cols-3">
+      {steps.map(([t, d], i) => (
+        <li key={t}>
+          <div className="text-xs text-neutral-500">{i + 1}</div>
+          <div className="mt-1 text-sm font-medium text-neutral-100">{t}</div>
+          <p className="mt-1 text-sm leading-relaxed text-neutral-500">{d}</p>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -402,7 +313,7 @@ function PendingCard({
   const changed = chips.some(([k, v]) => JSON.stringify(edited[k]) !== JSON.stringify(v));
 
   return (
-    <motion.li layout initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.96, x: 40 }} transition={{ type: "spring", stiffness: 380, damping: 30 }} className="glass rounded-2xl p-5 shadow-[0_0_0_1px_rgba(245,158,11,0.35),0_0_30px_-8px_rgba(245,158,11,0.45)]">
+    <motion.li layout initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, scale: 0.96, x: 40 }} transition={{ type: "spring", stiffness: 380, damping: 30 }} className="glass rounded-2xl border border-amber-400/25 p-5">
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
         {a.environment && <span className={`rounded-full border px-2 py-0.5 font-medium ${envBadge(a.environment)}`}>{a.environment}</span>}
         <span className="font-mono text-neutral-400">{a.agent}</span>
@@ -561,7 +472,7 @@ function TrustPanel({
       <ul className="space-y-3">
         <AnimatePresence mode="popLayout">
           {suggestions.map((sg) => (
-            <motion.li key={sg.key} layout initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: 40 }} className="glass rounded-2xl p-5 shadow-[0_0_0_1px_rgba(56,189,248,0.35),0_0_30px_-8px_rgba(56,189,248,0.45)]">
+            <motion.li key={sg.key} layout initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: 40 }} className="glass rounded-2xl border border-sky-400/25 p-5">
               <p className="text-sm text-neutral-300">
                 Humans approved <span className="font-mono text-white">{describePattern(sg.pattern)}</span> {sg.approvals} times in a row, unchanged
                 {sg.avgDecisionMs > 0 && <>, taking {(sg.avgDecisionMs / 1000).toFixed(0)}s each on average</>}.
@@ -630,7 +541,10 @@ export default function Console() {
   const [weekPaused, setWeekPaused] = useState(false);
   const [progress, setProgress] = useState<{ step: number; total: number }>({ step: 0, total: 0 });
 
-  const showConsole = () => document.getElementById("console")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  // Once a demo starts and the console exists on the page, bring it into view.
+  useEffect(() => {
+    if (demo) document.getElementById("console")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [demo]);
 
   const load = useCallback(async () => {
     try {
@@ -685,7 +599,6 @@ export default function Console() {
     setDemoKind("incident");
     setDemoDone(false);
     setProgress({ step: 0, total: DEMO.length });
-    setTimeout(showConsole, 50);
     // Copy each checkpoint so React sees a change and re-renders.
     const refresh = () => setDemoCheckpoints(store.list().map((c) => ({ ...c })));
     refresh();
@@ -741,7 +654,6 @@ export default function Console() {
     setDemoDone(false);
     setWeekPaused(false);
     setProgress({ step: 0, total: WEEK.length });
-    setTimeout(showConsole, 50);
     const refresh = () => setDemoCheckpoints(store.list().map((c) => ({ ...c })));
     refresh();
 
@@ -856,6 +768,8 @@ export default function Console() {
     ? { suggestions: suggestTrust(demoCheckpoints, demoGrants, { minApprovals: WEEK_MIN_APPROVALS }), grants: demoGrants }
     : liveTrust;
   const activity = checkpoints.filter((c) => c.status !== "pending");
+  const showConsoleSection =
+    demo || checkpoints.length > 0 || trustView.suggestions.length > 0 || trustView.grants.length > 0 || (!DEMO_ONLY && (!reachable || approver === false));
 
   return (
     <>
@@ -886,37 +800,33 @@ export default function Console() {
         </header>
 
         {/* Hero */}
-        <section className="mb-16 grid items-center gap-10 lg:grid-cols-[1.15fr_1fr]">
+        <section className="mb-14 grid items-center gap-10 lg:grid-cols-[1.2fr_1fr]">
           <div>
-            <motion.span initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="mb-5 inline-flex items-center gap-2 rounded-full border border-indigo-400/25 bg-indigo-400/10 px-3 py-1 text-xs text-indigo-200">
-              <span className="h-1.5 w-1.5 rounded-full bg-indigo-300" /> Runtime safety for AI agents
-            </motion.span>
-            <motion.h1 initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }} className="text-4xl font-semibold leading-[1.1] tracking-tight text-white sm:text-5xl">
+            <h1 className="text-4xl font-semibold leading-[1.1] tracking-tight text-white sm:text-5xl">
               Let AI agents act.
               <br />
               <span className="grad-text">Stay in charge of what matters.</span>
-            </motion.h1>
-            <motion.p initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }} className="mt-5 max-w-xl text-[15px] leading-relaxed text-neutral-400">
-              Aegis sits between an AI agent and the systems it touches. Safe actions run instantly. Risky ones wait for a human. Over time, it learns what you always approve and asks less.
-            </motion.p>
-            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="mt-7 flex flex-wrap gap-3">
-              <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={runDemo} className="rounded-full bg-gradient-to-r from-indigo-500 via-sky-500 to-fuchsia-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/30">
-                ▶ Watch an agent handle an outage
-              </motion.button>
-              <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} onClick={runWeek} className="rounded-full border border-white/15 bg-white/5 px-5 py-2.5 text-sm font-medium text-neutral-100 hover:bg-white/10">
-                Simulate a week of earned trust
-              </motion.button>
-            </motion.div>
-            <p className="mt-4 text-xs text-neutral-500">Both demos take about a minute and run entirely in your browser. Nothing is sent or stored.</p>
+            </h1>
+            <p className="mt-5 max-w-lg text-[15px] leading-relaxed text-neutral-400">
+              Aegis sits between an AI agent and the systems it touches. Safe actions run on their own. Risky ones wait for you.
+            </p>
+            <div className="mt-7 flex flex-wrap items-center gap-4">
+              <button onClick={runDemo} className="rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-neutral-900 transition hover:bg-neutral-200">
+                Try the demo
+              </button>
+              <button onClick={runWeek} className="text-sm text-neutral-300 underline-offset-4 hover:text-white hover:underline">
+                See how trust builds over a week →
+              </button>
+            </div>
+            <p className="mt-4 text-xs text-neutral-600">About a minute. Runs in your browser; nothing is stored.</p>
           </div>
-          <motion.div initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: 0.15 }}>
-            <LiveStream />
-          </motion.div>
+          <Example />
         </section>
 
         <HowItWorks />
 
-        {/* The console */}
+        {/* The console: only shown once there's something in it */}
+        {showConsoleSection && (
         <section id="console" className="scroll-mt-6">
           <div className="mb-5 flex flex-wrap items-baseline justify-between gap-2">
             <h2 className="text-xs font-medium uppercase tracking-[0.18em] text-neutral-500">The console</h2>
@@ -977,7 +887,7 @@ export default function Console() {
             )}
           </div>
 
-          {(demoKind === "week" || !demo) && (
+          {((demo && demoKind === "week") || (!demo && (trustView.suggestions.length > 0 || trustView.grants.length > 0))) && (
             <TrustPanel
               suggestions={trustView.suggestions}
               grants={trustView.grants}
@@ -985,7 +895,6 @@ export default function Console() {
               minApprovals={demo ? WEEK_MIN_APPROVALS : 5}
               onGrant={grantTrust}
               onRevoke={revokeTrust}
-              onSimulate={demo ? undefined : runWeek}
             />
           )}
 
@@ -1025,13 +934,10 @@ export default function Console() {
             )}
           </div>
         </section>
-
-        <Features />
+        )}
 
         <footer className="border-t border-white/5 pt-6 text-center text-xs leading-relaxed text-neutral-600">
-          Aegis · autonomy where it&apos;s safe, people where it matters
-          <br />
-          This site uses no cookies, analytics or tracking. The demos run in your browser and nothing you do here is stored.
+          Aegis · No cookies, analytics or tracking.
         </footer>
       </main>
 
