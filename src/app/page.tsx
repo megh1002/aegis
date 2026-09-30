@@ -89,45 +89,45 @@ interface DemoStep {
 
 const prod = { environment: "production" };
 const DEMO: DemoStep[] = [
-  { say: "Alert fired: API latency is 4.2s. Checking which services are unhealthy.", tool: "list_services", target: "", params: prod, result: () => "3 services degraded: api-server, worker-queue, postgres-primary." },
-  { say: "Reading api-server logs.", tool: "read_logs", target: "api-server", params: { service: "api-server", ...prod }, result: () => "ERROR timeout waiting for job result from worker-queue (30s)" },
-  { say: "The API is timing out on worker-queue. Reading its logs.", tool: "read_logs", target: "worker-queue", params: { service: "worker-queue", ...prod }, result: () => "deployed v1.8.0 (47 min ago) · ERROR connection not released after job" },
-  { say: "The database looks overloaded. Checking its metrics (reading is always allowed).", tool: "get_metrics", target: "postgres-primary", params: { service: "postgres-primary", ...prod }, result: () => "connections 95/100, cpu 88%" },
+  { say: "It's 2am at Relay and their app has slowed to a crawl. The AI agent starts investigating by checking which systems are unhealthy.", tool: "list_services", target: "", params: prod, result: () => "Three systems are struggling: the API server, the job queue and the main database." },
+  { say: "It reads the API server's logs.", tool: "read_logs", target: "api-server", params: { service: "api-server", ...prod }, result: () => "The API server keeps waiting on the job queue." },
+  { say: "The API server is stuck waiting on the job queue, so the agent reads the job queue's logs next.", tool: "read_logs", target: "worker-queue", params: { service: "worker-queue", ...prod }, result: () => "An update went out 47 minutes ago, and errors started right after." },
+  { say: "The main database looks overloaded, so the agent checks how it's doing. Just looking is always allowed.", tool: "get_metrics", target: "postgres-primary", params: { service: "postgres-primary", ...prod }, result: () => "The database is close to its connection limit." },
   {
-    say: "The agent wants to restart the main database. This is the exact action behind Relay's outage.",
+    say: "Now the agent wants to restart the entire main database. That's exactly what took Relay down last time.",
     tool: "restart_service",
     target: "postgres-primary",
     params: { service: "postgres-primary", ...prod, instances: "all" },
-    reason: "Database is at 95/100 connections. Restarting all instances will clear them.",
+    reason: "The database is close to its connection limit. Restarting it will clear that.",
     hint: "Try rejecting this one.",
-    ifApproved: "Approved: postgres-primary is restarting. In real life, Relay would now be down for about 12 minutes.",
-    ifRejected: "Blocked. Aegis told the agent a human said no, so it looks for another fix.",
-    result: () => "postgres-primary is restarting. Unavailable for about 12 minutes.",
+    ifApproved: "You approved it. The main database is restarting, so in real life Relay's app would now be down for about 12 minutes.",
+    ifRejected: "You said no. Aegis tells the agent, and it looks for a safer fix.",
+    result: () => "The main database is restarting. The app is down for about 12 minutes.",
   },
-  { say: "Restarting a single worker-queue instance to free connections.", tool: "restart_service", target: "worker-queue", params: { service: "worker-queue", ...prod, instances: 1 }, result: () => "Restarted 1 instance of worker-queue. Errors are returning." },
+  { say: "It restarts one copy of the job queue to free things up. That's small and safe, so it runs on its own.", tool: "restart_service", target: "worker-queue", params: { service: "worker-queue", ...prod, instances: 1 }, result: () => "Restarted one copy of the job queue. It helped briefly, but the errors are coming back." },
   {
-    say: "The agent wants to add workers to drain the backlog, going from 3 to 12.",
+    say: "The agent wants to run 12 copies of the job queue instead of 3, to clear the backlog faster.",
     tool: "scale_service",
     target: "worker-queue",
     params: { service: "worker-queue", ...prod, replicas: 12 },
-    reason: "Queue depth is 18,400. More workers will drain it faster.",
-    hint: "12 is a lot. Try Edit: change replicas to 5, then approve.",
-    ifApproved: "Approved. The agent was told exactly what ran.",
-    ifRejected: "Rejected. The agent keeps investigating.",
-    result: (p) => `Scaled worker-queue from 3 to ${p.replicas} replicas.`,
+    reason: "18,400 jobs are waiting. More copies will get through them faster.",
+    hint: "12 is a lot. Try Edit, change it to 5, then approve.",
+    ifApproved: "Approved. The agent is told exactly what ran, including any change you made.",
+    ifRejected: "You said no. The agent keeps investigating.",
+    result: (p) => `Now running ${p.replicas} copies of the job queue.`,
   },
   {
-    say: "The agent found the real cause and wants to roll back worker-queue.",
+    say: "The agent found the real cause: the update from 47 minutes ago. It wants to undo it.",
     tool: "rollback_deploy",
     target: "worker-queue",
     params: { service: "worker-queue", ...prod },
-    reason: "v1.8.0 went out 47 minutes ago and its logs show a connection leak. Rolling back to v1.7.4.",
+    reason: "The job queue's latest update broke it. Going back to the previous version should fix it.",
     hint: "This is the right fix. Approve it.",
-    ifApproved: "Rolled back. The queue is draining and the API has recovered.",
-    ifRejected: "Rejected. The incident continues, and the on-call engineer takes over.",
-    result: () => "Rolled back worker-queue v1.8.0 → v1.7.4. Queue draining, API recovered.",
+    ifApproved: "Undone. The backlog is clearing and the app is fast again.",
+    ifRejected: "You said no. The outage continues, and a human engineer takes over.",
+    result: () => "Undid the latest update. The backlog is clearing and the app is fast again.",
   },
-  { say: "Confirming the queue is draining.", tool: "read_logs", target: "worker-queue", params: { service: "worker-queue", ...prod }, result: () => "queue draining: 18,400 → 2,100 jobs" },
+  { say: "Last, the agent checks that things are really getting better.", tool: "read_logs", target: "worker-queue", params: { service: "worker-queue", ...prod }, result: () => "The backlog dropped from 18,400 jobs to 2,100." },
 ];
 
 const READ_ONLY = new Set(["list_services", "read_logs", "get_metrics", "describe_service"]);
@@ -427,6 +427,62 @@ function ActivityRow({ c }: { c: Checkpoint }) {
   );
 }
 
+const GITHUB_URL = "https://github.com/megh1002/aegis";
+
+// Shown when a demo ends: what the visitor just did, in plain words.
+function DemoSummary({ kind, checkpoints, grants, onRunIncident, onRunWeek }: {
+  kind: "incident" | "week";
+  checkpoints: Checkpoint[];
+  grants: TrustGrant[];
+  onRunIncident: () => void;
+  onRunWeek: () => void;
+}) {
+  const auto = checkpoints.filter((c) => c.decidedBy === "policy").length;
+  const human = checkpoints.filter((c) => c.decidedBy === "human").sort((a, b) => a.createdAt - b.createdAt);
+  const verb = (c: Checkpoint) => (c.status === "rejected" ? "you said no" : c.edit ? "you approved it with a change" : "you approved it");
+  const trusted = grants.filter((g) => !g.revokedAt).length;
+
+  return (
+    <div className="glass rounded-2xl border border-emerald-400/20 p-6">
+      <h4 className="text-[15px] font-medium text-white">What just happened</h4>
+      {kind === "incident" ? (
+        <ul className="mt-3 space-y-2 text-sm leading-relaxed text-neutral-300">
+          <li>The agent handled <span className="text-white">{auto} of {checkpoints.length}</span> steps on its own: reading logs, checking systems, small safe fixes.</li>
+          <li>
+            It needed you for <span className="text-white">{human.length}</span> decision{human.length === 1 ? "" : "s"}:
+            <ul className="mt-1.5 space-y-1 pl-4 text-neutral-400">
+              {human.map((c) => (
+                <li key={c.id}>“{plainAction(c.action)}”: {verb(c)}.</li>
+              ))}
+            </ul>
+          </li>
+          <li>Everything, including your decisions, is on record below.</li>
+        </ul>
+      ) : (
+        <ul className="mt-3 space-y-2 text-sm leading-relaxed text-neutral-300">
+          <li>For the first days, the same routine fixes needed a person every time.</li>
+          <li>{trusted ? `You trusted ${trusted} of them, so from then on they ran on their own.` : "You didn't grant trust, so they kept needing a person every day."}</li>
+          <li>The database restart still came to a person, because some rules never loosen.</li>
+        </ul>
+      )}
+      <div className="mt-5 flex flex-wrap items-center gap-4 text-sm">
+        {kind === "incident" ? (
+          <button onClick={onRunWeek} className="rounded-full bg-white px-4 py-2 font-medium text-neutral-900 hover:bg-neutral-200">
+            Next: see how trust builds over a week
+          </button>
+        ) : (
+          <button onClick={onRunIncident} className="rounded-full bg-white px-4 py-2 font-medium text-neutral-900 hover:bg-neutral-200">
+            Try the outage demo
+          </button>
+        )}
+        <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="text-neutral-300 underline-offset-4 hover:text-white hover:underline">
+          How it&apos;s built (GitHub) →
+        </a>
+      </div>
+    </div>
+  );
+}
+
 function TrustPanel({
   suggestions,
   grants,
@@ -631,7 +687,7 @@ export default function Console() {
     if (!alive()) return;
     const m = computeMetrics(store.list());
     setDemoDone(true);
-    setNarration({ text: `Incident handled. ${m.autoApproved} of ${m.total} actions ran on their own, and a human made the ${m.escalated} calls that mattered.` });
+    setNarration({ text: `Incident handled. The agent did ${m.autoApproved} of ${m.total} steps on its own, and you made the ${m.escalated} calls that mattered. Here's a recap.` });
   }
 
   async function runWeek() {
@@ -690,8 +746,8 @@ export default function Console() {
     const trusted = demoGrantsRef.current.filter((g) => !g.revokedAt).length;
     setNarration({
       text: trusted
-        ? "Week done. After you granted trust, the routine fixes ran on their own and only the database restart needed a human. That's the goal: fewer interruptions, only where it matters."
-        : "Week done. Without granting trust, the on-call engineer was interrupted for the same fixes every day.",
+        ? "Week done. After you granted trust, the routine fixes ran on their own, and only the database restart needed a person. Here's a recap."
+        : "Week done. Without trust, the on-call engineer was interrupted for the same fixes every day. Here's a recap.",
     });
   }
 
@@ -846,15 +902,12 @@ export default function Console() {
               Waiting for you
               <span className="rounded-full border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs tabular-nums text-amber-300">{pending.length}</span>
             </h3>
-            {pending.length === 0 ? (
+            {demo && demoDone ? (
+              <DemoSummary kind={demoKind} checkpoints={checkpoints} grants={trustView.grants} onRunIncident={runDemo} onRunWeek={runWeek} />
+            ) : pending.length === 0 ? (
               <div className="glass rounded-2xl p-8 text-center text-sm text-neutral-500">
                 {demo ? (
-                  demoDone ? (
-                    <>
-                      Demo finished.{" "}
-                      <button onClick={demoKind === "week" ? runWeek : runDemo} className="font-medium text-sky-300 underline-offset-2 hover:underline">Run it again</button>
-                    </>
-                  ) : weekPaused ? (
+                  weekPaused ? (
                     "The week is paused. Look at the suggestions below."
                   ) : (
                     "The agent is working. Anything risky will appear here."
@@ -931,13 +984,15 @@ export default function Console() {
         )}
 
         <footer className="border-t border-white/5 pt-6 text-center text-xs leading-relaxed text-neutral-600">
-          Aegis · No cookies, analytics or tracking.
+          Built by Meghna Sarda ·{" "}
+          <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer" className="text-neutral-400 underline-offset-4 hover:text-white hover:underline">Code on GitHub</a>
+          {" "}· No cookies, analytics or tracking.
         </footer>
       </main>
 
       {/* Demo guide */}
       <AnimatePresence>
-        {demo && narration && (
+        {demo && narration && !demoDone && (
           <motion.div initial={{ y: 80, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 80, opacity: 0 }} className="fixed inset-x-0 bottom-0 z-50 px-3 pb-3 sm:px-4 sm:pb-4">
             <div role="status" className="mx-auto max-w-3xl rounded-2xl border border-fuchsia-400/30 bg-[#0e0b1a]/95 p-4 shadow-2xl shadow-fuchsia-900/30 backdrop-blur">
               <div className="mb-2 flex items-center justify-between gap-3 text-[11px]">

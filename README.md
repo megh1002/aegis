@@ -2,7 +2,7 @@
 
 A safety checkpoint for AI agents. Safe actions run on their own, risky ones wait for a person, and everything is on record.
 
-**Try it: [aegis-checkpoint.vercel.app](https://aegis-checkpoint.vercel.app)**
+**Try it: [loop-chi-plum.vercel.app](https://loop-chi-plum.vercel.app)**
 
 ## Why this exists
 
@@ -14,7 +14,7 @@ Aegis sits in between. You write down which actions are safe and which need a pe
 
 ## Try it
 
-Open [aegis-checkpoint.vercel.app](https://aegis-checkpoint.vercel.app) and click **Try the demo**. An AI agent works through a simulated outage at a made-up company called Relay. It investigates on its own, then asks to restart the main database, which is exactly what caused Relay's last outage. You decide.
+Open [loop-chi-plum.vercel.app](https://loop-chi-plum.vercel.app) and click **Try the demo**. An AI agent works through a simulated outage at a made-up company called Relay. It investigates on its own, then asks to restart the main database, which is exactly what caused Relay's last outage. You decide.
 
 There's a second demo, **See how trust builds over a week**, that fast-forwards seven days of routine incidents.
 
@@ -117,6 +117,3 @@ I wanted to understand what it actually takes to let an AI agent loose on real s
 
 Built with Next.js, TypeScript, the MCP TypeScript SDK and Vitest.
 
-## License
-
-MIT
