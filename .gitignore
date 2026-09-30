@@ -42,3 +42,6 @@ next-env.d.ts
 
 # Aegis audit log (local data)
 /.aegis
+
+# Personal study notes (not published)
+/notes

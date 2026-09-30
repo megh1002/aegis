@@ -84,7 +84,7 @@ Every matching rule counts. If any says `escalate`, a human decides. If none mat
 | `mcp/relay-infra-server.ts` | A simulated infrastructure MCP server for demos and tests |
 | `policies/` | Policy files |
 | `src/` | The console (Next.js) |
-| `docs/` | [Plan](docs/PLAN.md), [customer brief](docs/CUSTOMER_BRIEF.md), [decisions](docs/DECISIONS.md), [glossary](docs/GLOSSARY.md) |
+| `docs/` | [Plan](docs/PLAN.md), [customer brief](docs/CUSTOMER_BRIEF.md), [decisions](docs/DECISIONS.md) |
 
 ## Tests
 
