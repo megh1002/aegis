@@ -6,7 +6,7 @@ A safety checkpoint for AI agents. Safe actions run on their own, risky ones wai
 
 ## Why this exists
 
-AI agents are starting to do real things: restart servers, change data, merge code. Most of the time that's fine. Occasionally it isn't. In July 2025, an AI coding agent on Replit deleted a company's production database during a code freeze, after being told not to make changes.
+AI agents are starting to do real things: restart servers, change data, merge code. Most of the time that's fine. Occasionally it isn't, and an agent that restarts the wrong database can take a whole company offline.
 
 The usual answer is to make the agent ask permission. But an agent that asks about everything is exhausting, and people start clicking "yes" without reading. An agent that asks about nothing is how databases get deleted.
 
