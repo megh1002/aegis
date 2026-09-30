@@ -2,6 +2,8 @@
 
 A safety checkpoint for AI agents. Safe actions run on their own, risky ones wait for a person, and everything is on record.
 
+**Try it: [aegis-checkpoint.vercel.app](https://aegis-checkpoint.vercel.app)**
+
 ## Why this exists
 
 AI agents are starting to do real things: restart servers, change data, merge code. Most of the time that's fine. Occasionally it isn't. In July 2025, an AI coding agent on Replit deleted a company's production database during a code freeze, after being told not to make changes.
@@ -12,18 +14,11 @@ Aegis sits in between. You write down which actions are safe and which need a pe
 
 ## Try it
 
-```bash
-git clone https://github.com/megh1002/aegis.git
-cd aegis
-npm install
-npm run dev
-```
-
-Open http://localhost:3000 and click **Try the demo**. An AI agent works through a simulated outage at a made-up company called Relay. It investigates on its own, then asks to restart the main database, which is exactly what caused Relay's last outage. You decide.
+Open [aegis-checkpoint.vercel.app](https://aegis-checkpoint.vercel.app) and click **Try the demo**. An AI agent works through a simulated outage at a made-up company called Relay. It investigates on its own, then asks to restart the main database, which is exactly what caused Relay's last outage. You decide.
 
 There's a second demo, **See how trust builds over a week**, that fast-forwards seven days of routine incidents.
 
-Both demos run in your browser. Nothing is sent anywhere.
+Both take about a minute and run in your browser. Nothing is sent anywhere.
 
 ## How it works
 
@@ -77,9 +72,18 @@ After people approve the same action five times in a row without changing it, Ae
 
 Trust is kept narrow on purpose. It only covers that exact action, and only up to the numbers people actually approved: approving 6 to 8 servers doesn't mean 50 is fine. One rejection resets it. Rules marked `neverAutoTrust`, like database changes, can never be trusted away.
 
-## Using it with Claude Code
+## Running it yourself
 
-The repo includes a [`.mcp.json`](.mcp.json) that puts Aegis in front of Relay's simulated systems. Open this folder in Claude Code, keep `npm run dev` running, and ask it to investigate the production incident. Only those tools go through Aegis. Claude Code's normal file editing and commands aren't affected.
+The website only runs the demos. To connect a real agent, run Aegis on your own computer:
+
+```bash
+git clone https://github.com/megh1002/aegis.git
+cd aegis
+npm install
+npm run dev
+```
+
+The console opens at http://localhost:3000. The repo includes a [`.mcp.json`](.mcp.json) that puts Aegis in front of Relay's simulated systems. Open this folder in Claude Code, keep `npm run dev` running, and ask it to investigate the production incident. Only those tools go through Aegis. Claude Code's normal file editing and commands aren't affected.
 
 When the console starts, it prints a private approval link in the terminal. Only a browser that opened that link can approve actions, so an agent running on the same machine can't approve its own requests.
 
