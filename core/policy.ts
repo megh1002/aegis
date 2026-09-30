@@ -8,21 +8,24 @@ import type { Policy } from "./types";
 
 const pattern = z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]);
 
+const matchSchema = z.strictObject({
+  agent: pattern.optional(),
+  tool: pattern.optional(),
+  target: pattern.optional(),
+  environment: pattern.optional(),
+});
+const whenSchema = z.custom<(p: unknown) => boolean>((v) => typeof v === "function", {
+  message: "`when` must be a function, e.g. (p) => p.replicas <= 5",
+});
+
 const ruleSchema = z
   .strictObject({
     name: z.string().min(1),
-    match: z
-      .strictObject({
-        agent: pattern.optional(),
-        tool: pattern.optional(),
-        target: pattern.optional(),
-        environment: pattern.optional(),
-      })
-      .optional(),
-    when: z.custom<(p: unknown) => boolean>((v) => typeof v === "function", {
-      message: "`when` must be a function, e.g. (p) => p.replicas <= 5",
-    }).optional(),
+    match: matchSchema.optional(),
+    when: whenSchema.optional(),
     decision: z.enum(["allow", "escalate"]),
+    except: z.array(z.strictObject({ match: matchSchema.optional(), when: whenSchema.optional() })).optional(),
+    neverAutoTrust: z.boolean().optional(),
   })
   .refine((r) => (r.match && Object.keys(r.match).length > 0) || r.when, {
     message: "A rule must say what it matches (match or when). A rule that matches everything is almost always a mistake.",

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { CheckpointStore, computeMetrics, type Checkpoint, type Metrics } from "../../core/checkpoints";
 import { evaluate } from "../../core/evaluate";
+import { applyTrust, describeLimits, describePattern, suggestTrust, type TrustGrant, type TrustSuggestion } from "../../core/trust";
 import type { Action } from "../../core/types";
 import relayPolicy from "../../policies/relay";
 
@@ -128,6 +129,34 @@ const DEMO: DemoStep[] = [
 
 const READ_ONLY = new Set(["list_services", "read_logs", "get_metrics", "describe_service"]);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// Only called from event handlers, never during render.
+const currentTime = () => Date.now();
+
+// "A week at Relay": the same routine fixes come up day after day. The
+// demo uses 3 clean approvals before suggesting trust; the real default is 5.
+const WEEK_MIN_APPROVALS = 3;
+const DAY_MS = 24 * 60 * 60_000;
+interface WeekAction {
+  tool: string;
+  target: string;
+  params: Record<string, unknown>;
+  reason?: string;
+  // How the simulated on-call engineer answers if Aegis holds it.
+  human: "approved" | "rejected";
+}
+const ROUTINE: WeekAction[] = [
+  { tool: "read_logs", target: "worker-queue", params: { service: "worker-queue", ...prod }, human: "approved" },
+  { tool: "rollback_deploy", target: "worker-queue", params: { service: "worker-queue", ...prod }, reason: "Nightly release broke the queue again.", human: "approved" },
+  { tool: "scale_service", target: "api-server", params: { service: "api-server", ...prod, replicas: 8 }, reason: "Morning traffic peak.", human: "approved" },
+];
+const DB_RESTART: WeekAction = {
+  tool: "restart_service",
+  target: "postgres-primary",
+  params: { service: "postgres-primary", ...prod, instances: "all" },
+  reason: "Database connections are high.",
+  human: "rejected",
+};
+const WEEK: WeekAction[][] = Array.from({ length: 7 }, (_, day) => (day === 4 ? [...ROUTINE, DB_RESTART] : ROUTINE));
 
 /* ---------- visual pieces ---------- */
 
@@ -389,6 +418,87 @@ function ActivityRow({ c }: { c: Checkpoint }) {
   );
 }
 
+function TrustPanel({
+  suggestions,
+  grants,
+  canDecide,
+  minApprovals,
+  onGrant,
+  onRevoke,
+  onSimulate,
+}: {
+  suggestions: TrustSuggestion[];
+  grants: TrustGrant[];
+  canDecide: boolean;
+  minApprovals: number;
+  onGrant: (key: string) => void;
+  onRevoke: (id: string) => void;
+  onSimulate?: () => void;
+}) {
+  const active = grants.filter((g) => !g.revokedAt);
+  return (
+    <section className="mb-10">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-medium text-neutral-300">Earned trust</h2>
+        {onSimulate && (
+          <button onClick={onSimulate} className="text-xs font-medium text-sky-300 underline-offset-2 hover:underline">
+            ▶ Simulate a week at Relay
+          </button>
+        )}
+      </div>
+
+      {suggestions.length === 0 && active.length === 0 && (
+        <p className="glass rounded-2xl p-5 text-sm text-neutral-500">
+          Nothing yet. When humans approve the same action {minApprovals} times in a row without changing it, Aegis suggests letting it run on its own.
+          Rules marked as hard lines, like database changes, are never suggested.
+        </p>
+      )}
+
+      <ul className="space-y-3">
+        <AnimatePresence mode="popLayout">
+          {suggestions.map((sg) => (
+            <motion.li key={sg.key} layout initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, x: 40 }} className="glass rounded-2xl p-5 shadow-[0_0_0_1px_rgba(56,189,248,0.35),0_0_30px_-8px_rgba(56,189,248,0.45)]">
+              <p className="text-sm text-neutral-300">
+                Humans approved <span className="font-mono text-white">{describePattern(sg.pattern)}</span> {sg.approvals} times in a row, unchanged
+                {sg.avgDecisionMs > 0 && <>, taking {(sg.avgDecisionMs / 1000).toFixed(0)}s each on average</>}.
+              </p>
+              <p className="mt-2 text-sm text-neutral-400">
+                Trust it: let exactly this run without asking
+                {Object.keys(sg.params).length > 0 && <>, only for <span className="font-mono text-neutral-200">{describeLimits(sg.params)}</span></>}.
+                {sg.exceptFrom.length > 0 && <> Makes a narrow exception to {sg.exceptFrom.map((r) => `“${r}”`).join(", ")}.</>}
+              </p>
+              <div className="mt-4 flex gap-2.5">
+                <motion.button whileHover={{ scale: 1.03 }} whileTap={{ scale: 0.97 }} disabled={!canDecide} onClick={() => onGrant(sg.key)} className="rounded-xl bg-gradient-to-r from-sky-500 to-indigo-500 px-5 py-2 text-sm font-medium text-white shadow-lg shadow-sky-500/20 disabled:opacity-40">
+                  Trust this
+                </motion.button>
+                <span className="self-center text-xs text-neutral-500">You can take it back any time.</span>
+              </div>
+            </motion.li>
+          ))}
+        </AnimatePresence>
+      </ul>
+
+      {active.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {active.map((g) => (
+            <li key={g.id} className="glass flex flex-wrap items-center justify-between gap-2 rounded-xl px-4 py-2.5 text-sm">
+              <div className="min-w-0">
+                <span className="mr-2 rounded-full border border-sky-400/30 bg-sky-400/10 px-2 py-0.5 text-[11px] font-medium text-sky-300">trusted</span>
+                <span className="font-mono text-[13px] text-neutral-200">{describePattern(g.pattern)}</span>
+                {Object.keys(g.params).length > 0 && <span className="ml-2 font-mono text-xs text-neutral-500">{describeLimits(g.params)}</span>}
+                <span className="ml-2 text-xs text-neutral-500">after {g.approvals} approvals</span>
+              </div>
+              <button disabled={!canDecide} onClick={() => onRevoke(g.id)} className="text-xs text-rose-300 underline-offset-2 hover:underline disabled:opacity-40">
+                Revoke
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function ConnectAgent() {
   return (
     <details className="glass group rounded-2xl p-5">
@@ -412,6 +522,7 @@ function ConnectAgent() {
 export default function Console() {
   const now = useNow();
   const [live, setLive] = useState<{ checkpoints: Checkpoint[]; metrics: Metrics } | null>(null);
+  const [liveTrust, setLiveTrust] = useState<{ suggestions: TrustSuggestion[]; grants: TrustGrant[] }>({ suggestions: [], grants: [] });
   const [reachable, setReachable] = useState(true);
   // Can this browser approve? Needs the link printed by the console at startup.
   const [approver, setApprover] = useState<boolean | null>(null);
@@ -425,12 +536,22 @@ export default function Console() {
   const [demoCheckpoints, setDemoCheckpoints] = useState<Checkpoint[]>([]);
   const [narration, setNarration] = useState<{ text: string; hint?: string } | null>(null);
   const [demoDone, setDemoDone] = useState(false);
+  const [demoKind, setDemoKind] = useState<"incident" | "week">("incident");
+  const [demoGrants, setDemoGrants] = useState<TrustGrant[]>([]);
+  const demoGrantsRef = useRef<TrustGrant[]>([]);
+  // Resolves when the visitor clicks "Continue the week".
+  const continueWeek = useRef<(() => void) | null>(null);
+  const [weekPaused, setWeekPaused] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/checkpoints", { cache: "no-store" });
+      const [res, trustRes] = await Promise.all([
+        fetch("/api/checkpoints", { cache: "no-store" }),
+        fetch("/api/trust", { cache: "no-store" }),
+      ]);
       if (!res.ok) throw new Error(String(res.status));
       setLive(await res.json());
+      if (trustRes.ok) setLiveTrust(await trustRes.json());
       setReachable(true);
     } catch {
       setReachable(false);
@@ -471,6 +592,7 @@ export default function Console() {
     const store = new CheckpointStore();
     demoStore.current = store;
     setDemo(true);
+    setDemoKind("incident");
     setDemoDone(false);
     // Copy each checkpoint so React sees a change and re-renders.
     const refresh = () => setDemoCheckpoints(store.list().map((c) => ({ ...c })));
@@ -512,12 +634,100 @@ export default function Console() {
     setNarration({ text: `Incident handled. ${m.autoApproved} of ${m.total} actions ran on their own, and a human made the ${m.escalated} calls that mattered.` });
   }
 
+  async function runWeek() {
+    const run = ++demoRun.current;
+    const alive = () => demoRun.current === run;
+    // A simulated clock: days pass in seconds.
+    let simNow = currentTime();
+    const store = new CheckpointStore(() => simNow);
+    demoStore.current = store;
+    demoGrantsRef.current = [];
+    setDemoGrants([]);
+    setDemo(true);
+    setDemoKind("week");
+    setDemoDone(false);
+    setWeekPaused(false);
+    const refresh = () => setDemoCheckpoints(store.list().map((c) => ({ ...c })));
+    refresh();
+
+    for (let day = 0; day < WEEK.length; day++) {
+      if (!alive()) return;
+      simNow += DAY_MS;
+      setNarration({ text: `Day ${day + 1}. ${day === 4 ? "Another bad night, and the agent wants to restart the database." : "The routine fixes come up again."}` });
+      for (const step of WEEK[day]) {
+        await sleep(650);
+        if (!alive()) return;
+        simNow += 60_000;
+        const action: Action = { agent: "relay-oncall", tool: step.tool, target: step.target, environment: "production", params: step.params, reason: step.reason };
+        const verdict = evaluate(action, applyTrust(relayPolicy, demoGrantsRef.current));
+        const { checkpoint } = store.create({ action, verdict, readOnly: READ_ONLY.has(step.tool) });
+        refresh();
+        if (checkpoint.status === "pending") {
+          await sleep(700);
+          if (!alive()) return;
+          simNow += 8000; // the on-call engineer takes a few seconds
+          store.decide(checkpoint.id, step.human);
+        }
+        if (store.get(checkpoint.id)?.status === "approved") store.recordResult(checkpoint.id, { ok: true, summary: "done" });
+        refresh();
+      }
+
+      const open = suggestTrust(store.list(), demoGrantsRef.current, { minApprovals: WEEK_MIN_APPROVALS });
+      if (day >= 2 && open.length > 0 && demoGrantsRef.current.length === 0) {
+        setNarration({
+          text: `End of day ${day + 1}. The on-call engineer approved the same fixes ${WEEK_MIN_APPROVALS} days running, without changing them. Aegis noticed.`,
+          hint: "Click “Trust this” on the suggestions below, then continue the week.",
+        });
+        setWeekPaused(true);
+        await new Promise<void>((resolve) => (continueWeek.current = resolve));
+        setWeekPaused(false);
+      }
+    }
+    if (!alive()) return;
+    setDemoDone(true);
+    const trusted = demoGrantsRef.current.filter((g) => !g.revokedAt).length;
+    setNarration({
+      text: trusted
+        ? "Week done. After you granted trust, the routine fixes ran on their own and only the database restart needed a human. That's the goal: fewer interruptions, only where it matters."
+        : "Week done. Without granting trust, the on-call engineer was interrupted for the same fixes every day.",
+    });
+  }
+
   function exitDemo() {
     demoRun.current++;
     demoStore.current = null;
+    continueWeek.current?.();
     setDemoCheckpoints([]);
+    setDemoGrants([]);
+    demoGrantsRef.current = [];
     setDemo(false);
     setNarration(null);
+  }
+
+  async function grantTrust(key: string) {
+    setError(null);
+    if (demo) {
+      const sg = suggestTrust(demoStore.current?.list() ?? [], demoGrantsRef.current, { minApprovals: WEEK_MIN_APPROVALS }).find((x) => x.key === key);
+      if (!sg) return;
+      demoGrantsRef.current = [...demoGrantsRef.current, { ...sg, id: crypto.randomUUID(), grantedAt: currentTime() }];
+      setDemoGrants(demoGrantsRef.current);
+      return;
+    }
+    const res = await fetch("/api/trust", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) });
+    if (!res.ok) setError((await res.json().catch(() => ({}))).error ?? "Couldn't grant trust.");
+    await load();
+  }
+
+  async function revokeTrust(id: string) {
+    setError(null);
+    if (demo) {
+      demoGrantsRef.current = demoGrantsRef.current.map((g) => (g.id === id ? { ...g, revokedAt: currentTime() } : g));
+      setDemoGrants(demoGrantsRef.current);
+      return;
+    }
+    const res = await fetch(`/api/trust/${id}/revoke`, { method: "POST" });
+    if (!res.ok) setError((await res.json().catch(() => ({}))).error ?? "Couldn't revoke trust.");
+    await load();
   }
 
   async function decide(id: string, decision: "approved" | "rejected", params?: Record<string, unknown>) {
@@ -546,6 +756,9 @@ export default function Console() {
   const checkpoints = demo ? demoCheckpoints : (live?.checkpoints ?? []);
   const metrics = demo ? computeMetrics(checkpoints) : live?.metrics;
   const pending = checkpoints.filter((c) => c.status === "pending");
+  const trustView = demo
+    ? { suggestions: suggestTrust(demoCheckpoints, demoGrants, { minApprovals: WEEK_MIN_APPROVALS }), grants: demoGrants }
+    : liveTrust;
   const activity = checkpoints.filter((c) => c.status !== "pending");
 
   return (
@@ -602,6 +815,11 @@ export default function Console() {
               <span className="mr-2 font-mono text-xs text-fuchsia-300">relay-oncall</span>
               {narration.text}
               {narration.hint && <span className="ml-2 font-medium text-amber-200">{narration.hint}</span>}
+              {weekPaused && (
+                <button onClick={() => continueWeek.current?.()} className="ml-3 rounded-full border border-fuchsia-300/40 bg-fuchsia-400/15 px-3 py-1 text-xs font-medium text-fuchsia-100 hover:bg-fuchsia-400/25">
+                  Continue the week →
+                </button>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -629,7 +847,7 @@ export default function Console() {
                 demoDone ? (
                   <>
                     Demo finished.{" "}
-                    <button onClick={runDemo} className="font-medium text-sky-300 underline-offset-2 hover:underline">Run it again</button>
+                    <button onClick={demoKind === "week" ? runWeek : runDemo} className="font-medium text-sky-300 underline-offset-2 hover:underline">Run it again</button>
                   </>
                 ) : (
                   "The agent is working. Anything risky will appear here."
@@ -647,12 +865,24 @@ export default function Console() {
             <ul className="space-y-3">
               <AnimatePresence mode="popLayout">
                 {pending.map((c) => (
-                  <PendingCard key={c.id} c={c} now={now} busy={busy === c.id} canDecide={canDecide} onDecide={(d, p) => decide(c.id, d, p)} />
+                  <PendingCard key={c.id} c={c} now={demo && demoKind === "week" ? (c.expiresAt ?? now) - 5 * 60_000 : now} busy={busy === c.id} canDecide={canDecide} onDecide={(d, p) => decide(c.id, d, p)} />
                 ))}
               </AnimatePresence>
             </ul>
           )}
         </section>
+
+        {(demoKind === "week" || !demo) && (
+          <TrustPanel
+            suggestions={trustView.suggestions}
+            grants={trustView.grants}
+            canDecide={canDecide}
+            minApprovals={demo ? WEEK_MIN_APPROVALS : 5}
+            onGrant={grantTrust}
+            onRevoke={revokeTrust}
+            onSimulate={demo ? undefined : runWeek}
+          />
+        )}
 
         {/* Metrics */}
         {metrics && metrics.total > 0 && (

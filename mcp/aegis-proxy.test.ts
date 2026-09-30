@@ -32,7 +32,7 @@ async function setup(human: Human = () => "no answer") {
   const call = async (name: string, args: Record<string, unknown>) =>
     (await agent.callTool({ name, arguments: args })) as CallToolResult;
   const textOf = (r: CallToolResult) => r.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
-  return { agent, call, textOf, store: gate.store };
+  return { agent, call, textOf, store: gate.store, gate };
 }
 
 const prod = { environment: "production" };
@@ -109,6 +109,20 @@ describe("Edit before approve, and what happened", () => {
     await call("rollback_deploy", { service: "worker-queue", ...prod });
     await new Promise((r) => setTimeout(r, 10));
     expect(store.list()[0].execution).toMatchObject({ ok: true, summary: expect.stringMatching(/recovered/) });
+  });
+});
+
+describe("Earned trust through the proxy", () => {
+  it("runs a trusted action on its own once a human grants trust", async () => {
+    const { call, store, gate } = await setup(() => "approved");
+    const args = { service: "worker-queue", ...prod };
+    const trustedFor = { agent: "relay-oncall", tool: "rollback_deploy", target: "worker-queue", environment: "production" };
+    gate.trustGrants = [
+      { id: "g", grantedAt: 0, key: "k", pattern: trustedFor, params: {}, exceptFrom: ["Production rollbacks need a human"], approvals: 5, avgDecisionMs: 0, lastApprovedAt: 0 },
+    ];
+    await call("rollback_deploy", args);
+    expect(store.list()[0].decidedBy).toBe("policy");
+    expect(store.list()[0].verdict.matchedRules).toContain("Earned trust: rollback_deploy → worker-queue (production)");
   });
 });
 

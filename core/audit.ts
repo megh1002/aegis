@@ -10,12 +10,17 @@ import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Checkpoint, CheckpointEvent } from "./checkpoints";
+import type { TrustGrant } from "./trust";
 
+export type TrustEvent = "trust-granted" | "trust-revoked";
+
+// Each entry records either a checkpoint change or a trust change.
 export interface AuditEntry {
   seq: number;
   at: number;
-  event: CheckpointEvent;
-  checkpoint: Checkpoint;
+  event: CheckpointEvent | TrustEvent;
+  checkpoint?: Checkpoint;
+  grant?: TrustGrant;
   prevHash: string;
   hash: string;
 }
@@ -68,7 +73,15 @@ export class AuditLog {
   }
 
   append(event: CheckpointEvent, checkpoint: Checkpoint) {
-    const body = { seq: this.seq + 1, at: Date.now(), event, checkpoint, prevHash: this.prevHash };
+    this.write({ event, checkpoint });
+  }
+
+  appendTrust(event: TrustEvent, grant: TrustGrant) {
+    this.write({ event, grant });
+  }
+
+  private write(record: Pick<AuditEntry, "event" | "checkpoint" | "grant">) {
+    const body = { seq: this.seq + 1, at: Date.now(), ...record, prevHash: this.prevHash };
     const entry: AuditEntry = { ...body, hash: hashOf(body) };
     mkdirSync(dirname(this.path), { recursive: true });
     appendFileSync(this.path, JSON.stringify(entry) + "\n");
@@ -87,7 +100,14 @@ export class AuditLog {
   // The latest state of every checkpoint, for rebuilding the store on restart.
   latestCheckpoints(): Checkpoint[] {
     const latest = new Map<string, Checkpoint>();
-    for (const e of this.entries()) latest.set(e.checkpoint.id, e.checkpoint);
+    for (const e of this.entries()) if (e.checkpoint) latest.set(e.checkpoint.id, e.checkpoint);
+    return [...latest.values()];
+  }
+
+  // The latest state of every trust grant.
+  latestGrants(): TrustGrant[] {
+    const latest = new Map<string, TrustGrant>();
+    for (const e of this.entries()) if (e.grant) latest.set(e.grant.id, e.grant);
     return [...latest.values()];
   }
 }

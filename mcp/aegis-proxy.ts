@@ -33,6 +33,7 @@ import {
 import { evaluate } from "../core/evaluate";
 import { ENV_KEYS, TARGET_KEYS } from "../core/keys";
 import { loadPolicy } from "../core/load";
+import { applyTrust } from "../core/trust";
 import type { Action, Params, Policy } from "../core/types";
 import { ConsoleGate, type Gate } from "./gate";
 
@@ -113,7 +114,7 @@ export function createAegisProxy(opts: ProxyOptions): Server {
 
     const agent = opts.agent ?? server.getClientVersion()?.name ?? "unknown-agent";
     const action = toAction(name, rawArgs, agent, opts.environment);
-    const verdict = evaluate(action, opts.policy);
+    const verdict = evaluate(action, applyTrust(opts.policy, await opts.gate.grants()));
     log(`${verdict.decision.toUpperCase().padEnd(8)} ${name} ${action.target ?? ""} ${action.environment ?? ""} · ${verdict.explanation}`);
 
     // While a human decides, tell the agent we're still working on it.

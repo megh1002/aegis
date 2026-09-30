@@ -17,6 +17,7 @@ Aegis is an [MCP](https://modelcontextprotocol.io) proxy. It looks like the tool
 - **Fails closed.** If the console is unreachable, nothing runs.
 - **The same change can't run twice by accident.**
 - **Humans can edit before approving** (12 servers → 5), and the agent is told what changed.
+- **Earned trust.** After humans approve the same action 5 times unchanged, Aegis suggests letting it run on its own, only within what was approved. Hard-line rules (like database changes) are never loosened. Try **Simulate a week at Relay** in the console.
 - **Tamper-evident audit log.** Every event is recorded in a hash chain in `.aegis/audit.jsonl`; check it with `npm run audit:verify`.
 
 > **Status:** work in progress (v2). See [docs/PLAN.md](docs/PLAN.md).
@@ -66,6 +67,7 @@ export default definePolicy({
       name: "Changing a database needs a human",
       match: { target: ["postgres-*"], tool: ["restart_*", "drop_*"] },
       decision: "escalate",
+      neverAutoTrust: true, // earned trust never loosens this
     },
   ],
 });

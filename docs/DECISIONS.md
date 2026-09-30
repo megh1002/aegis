@@ -105,3 +105,25 @@ The console's approve button called an API with no login, so a coding agent that
 **Chose:** After an approved action runs, the proxy reports the outcome (success or failure plus a short summary), and it's added to the record once.
 **Why:** "Approved" isn't the same as "it worked." An audit answers both *who allowed it* and *what it did*.
 
+## 020 · Earned trust carves narrow exceptions
+**Chose:** After a human approves the same kind of action (same agent, tool, target and environment) 5 times in a row without changing it, Aegis *suggests* trusting it. A human accepts the suggestion, and that acceptance is recorded in the audit log. The grant adds an allow rule *and* an exception to each rule that was holding the action.
+**Instead of:** Just adding an allow rule, which does nothing under strictest-wins (005), or loosening whole rules automatically.
+**Why:** It's how Aegis keeps its promise of asking less over time, without ever changing policy on its own.
+
+## 021 · Trust is earned slowly and lost quickly
+**Chose:** Only the unbroken run of clean approvals counts. One rejection, human edit or failed run resets it. Numbers are capped at the largest value humans approved (approved 6–8 servers → trusted up to 8, not 50). Duplicates don't count. Grants can be revoked any time, and the proxy notices within 3 seconds.
+**Why:** Trust should cover what humans actually saw and approved, and nothing wider.
+
+## 022 · Some rules are hard lines
+**Chose:** Rules can be marked `neverAutoTrust`. Relay's database-change and deletion rules are. Aegis never suggests loosening them, and even a forged grant can't carve into them.
+**Why:** Relay's outage was a database restart. Some actions should always have a human, however many times they've been approved.
+
+## 023 · If the console can't be reached, no trust applies
+**Chose:** The proxy fetches grants from the console; on failure it uses none.
+**Why:** Grants only ever loosen the policy, so "no grants" is the safe side. (Fail-closed (010) blocks the action anyway.)
+
+## 024 · A bug found by testing the real API (lesson)
+**What happened:** The console's API dropped two verdict fields (`escalatedBy`, `lockedBy`) because its schema didn't list them. Unit tests passed because they never went through the API. A live smoke test exposed it: trust for production rollbacks would silently have done nothing.
+**Changed:** The request schema moved into `core/` with a regression test.
+**Lesson:** Test across boundaries, not just the pieces. Schemas that quietly drop unknown fields hide this kind of bug.
+

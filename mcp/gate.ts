@@ -2,6 +2,7 @@
 // to the Aegis console over HTTP. Tests use an in-memory one.
 
 import { CheckpointStore, type Change, type Checkpoint, type NewCheckpoint } from "../core/checkpoints";
+import type { TrustGrant } from "../core/trust";
 import type { Params } from "../core/types";
 
 export interface GateResult {
@@ -30,6 +31,8 @@ export interface Gate {
   submit(request: NewCheckpoint, options?: WaitOptions): Promise<GateResult>;
   // After an approved action runs, record what happened.
   reportResult(checkpointId: string, result: ExecutionResult): Promise<void>;
+  // Trust humans have granted, to apply on top of the policy.
+  grants(): Promise<TrustGrant[]>;
 }
 
 const sleep = (ms: number, signal?: AbortSignal) =>
@@ -111,6 +114,23 @@ export class ConsoleGate implements Gate {
     return finalResult(checkpoint);
   }
 
+  private cachedGrants: { at: number; grants: TrustGrant[] } = { at: 0, grants: [] };
+
+  // Refreshed every few seconds, so granting or revoking trust in the
+  // console takes effect quickly. If the console can't be reached, no
+  // grants apply: grants only ever loosen the policy, so none is the safe side.
+  async grants(): Promise<TrustGrant[]> {
+    if (Date.now() - this.cachedGrants.at < 3000) return this.cachedGrants.grants;
+    try {
+      const res = await fetch(`${this.baseUrl}/api/trust`, { headers: this.headers() });
+      const grants = res.ok ? ((await res.json()).grants as TrustGrant[]) : [];
+      this.cachedGrants = { at: Date.now(), grants };
+      return grants;
+    } catch {
+      return [];
+    }
+  }
+
   async reportResult(checkpointId: string, result: ExecutionResult) {
     try {
       await fetch(`${this.baseUrl}/api/checkpoints/${checkpointId}/result`, {
@@ -149,6 +169,12 @@ export class MemoryGate implements Gate {
       if (!result.ok) throw new Error(result.error);
     }
     return finalResult(this.store.get(checkpoint.id)!);
+  }
+
+  public trustGrants: TrustGrant[] = [];
+
+  async grants() {
+    return this.trustGrants;
   }
 
   async reportResult(checkpointId: string, result: ExecutionResult) {

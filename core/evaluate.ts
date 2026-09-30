@@ -7,22 +7,33 @@
 // Plus one safety net: if a rule's `when` check crashes, a human decides.
 
 import { matchesPattern } from "./match";
-import type { Action, Policy, Rule, Verdict } from "./types";
+import type { Action, Match, Policy, Rule, Verdict } from "./types";
 
 type RuleResult = "match" | "no-match" | "error";
 
-function checkRule(rule: Rule, action: Action): RuleResult {
-  const m = rule.match ?? {};
+// Does this match + when pair cover the action?
+function covers(m: Match, when: Rule["when"], action: Action): RuleResult {
   if (m.agent && !matchesPattern(m.agent, action.agent)) return "no-match";
   if (m.tool && !matchesPattern(m.tool, action.tool)) return "no-match";
   if (m.target && !matchesPattern(m.target, action.target)) return "no-match";
   if (m.environment && !matchesPattern(m.environment, action.environment)) return "no-match";
-  if (rule.when) {
+  if (when) {
     try {
-      if (rule.when(action.params ?? {}) !== true) return "no-match";
+      if (when(action.params ?? {}) !== true) return "no-match";
     } catch {
       return "error";
     }
+  }
+  return "match";
+}
+
+function checkRule(rule: Rule, action: Action): RuleResult {
+  const result = covers(rule.match ?? {}, rule.when, action);
+  if (result !== "match") return result;
+  for (const ex of rule.except ?? []) {
+    const r = covers(ex.match ?? {}, ex.when, action);
+    // A crashing exception is treated as "not excepted": the rule still applies.
+    if (r === "match") return "no-match";
   }
   return "match";
 }
@@ -39,6 +50,8 @@ export function evaluate(action: Action, policy: Policy): Verdict {
       decision: "escalate",
       matchedRules: matched.map((r) => r.name),
       explanation: `A rule crashed while checking this action (${quote(broken)}), so a human decides.`,
+      // A broken rule is a problem to fix, not something to learn to trust.
+      lockedBy: broken.map((r) => r.name),
     };
   }
 
@@ -47,6 +60,8 @@ export function evaluate(action: Action, policy: Policy): Verdict {
       decision: "escalate",
       matchedRules: [],
       explanation: "No rule covers this action, so a human decides.",
+      escalatedBy: [],
+      lockedBy: [],
     };
   }
 
@@ -56,6 +71,8 @@ export function evaluate(action: Action, policy: Policy): Verdict {
       decision: "escalate",
       matchedRules: matched.map((r) => r.name),
       explanation: `Needs a human: ${quote(escalating)}.`,
+      escalatedBy: escalating.map((r) => r.name),
+      lockedBy: escalating.filter((r) => r.neverAutoTrust).map((r) => r.name),
     };
   }
 

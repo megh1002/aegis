@@ -38,7 +38,7 @@ describe("Audit log", () => {
   it("keeps the human's edit and what actually ran", () => {
     const { log, store } = setup();
     runSomeActions(store);
-    const last = log.entries().at(-1)!.checkpoint;
+    const last = log.entries().at(-1)!.checkpoint!;
     expect(last.action.params?.replicas).toBe(20);
     expect(last.edit?.changes).toEqual([{ key: "replicas", from: 20, to: 5 }]);
     expect(last.execution?.summary).toBe("Scaled api to 5.");

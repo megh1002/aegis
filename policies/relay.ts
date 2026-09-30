@@ -42,6 +42,8 @@ export default definePolicy({
         tool: ["restart_*", "scale_*", "rollback_*", "delete_*", "drop_*", "update_*"],
       },
       decision: "escalate",
+      // The outage rule. No amount of approvals makes this automatic.
+      neverAutoTrust: true,
     },
 
     // "If the agent wants to add 20 servers, I might say yes to 5."
@@ -65,6 +67,7 @@ export default definePolicy({
       name: "Deleting data needs a human",
       match: { tool: ["delete_*", "drop_*"] },
       decision: "escalate",
+      neverAutoTrust: true,
     },
   ],
 });
