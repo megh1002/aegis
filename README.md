@@ -44,11 +44,9 @@ To approve, reject or edit held actions, open the **approval link** the console 
 
 ## Connect Claude Code
 
-```bash
-claude mcp add relay-infra -- npx tsx mcp/aegis-proxy.ts --policy policies/relay.ts --agent relay-oncall -- npx tsx mcp/relay-infra-server.ts
-```
+This repo includes a [`.mcp.json`](.mcp.json), so Claude Code picks up the protected Relay tools automatically when opened in this folder (it asks you to approve the server once). Keep `npm run dev` running, then ask Claude Code to "investigate the production incident and fix it."
 
-Run it from this folder. Everything after the last `--` is the MCP server Aegis protects; swap in any other server.
+Only the Relay tools go through Aegis. Claude Code's own tools (editing files, running commands) are unaffected. Everything after the last `--` in `.mcp.json` is the server Aegis protects; swap in any other MCP server.
 
 ## Write a policy
 

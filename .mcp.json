@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "relay-infra": {
+      "command": "npx",
+      "args": [
+        "tsx", "mcp/aegis-proxy.ts",
+        "--policy", "policies/relay.ts",
+        "--agent", "claude-code",
+        "--",
+        "npx", "tsx", "mcp/relay-infra-server.ts"
+      ]
+    }
+  }
+}
