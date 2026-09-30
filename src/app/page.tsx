@@ -166,8 +166,8 @@ function Background() {
   return <div className="aegis-bg" />;
 }
 
-// The Aegis mark: a white shield with a check, on a rounded gradient tile.
-// Same drawing as src/app/icon.svg (the browser-tab icon).
+// The Aegis mark: a geometric "A" whose crossbar is a single dot, the
+// checkpoint every action passes. Same drawing as src/app/icon.svg.
 function Logo({ className = "" }: { className?: string }) {
   return (
     <svg viewBox="0 0 32 32" className={className} aria-hidden>
@@ -178,8 +178,8 @@ function Logo({ className = "" }: { className?: string }) {
         </linearGradient>
       </defs>
       <rect width="32" height="32" rx="9" fill="url(#aegis-tile)" />
-      <path d="M16 6.5 9 9.2v5.6c0 4.6 3 8.1 7 9.7 4-1.6 7-5.1 7-9.7V9.2l-7-2.7Z" fill="none" stroke="white" strokeWidth="1.9" strokeLinejoin="round" />
-      <path d="m12.8 15.6 2.3 2.3 4.3-4.6" fill="none" stroke="white" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M9 24.5 16 7.5l7 17" fill="none" stroke="white" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="16" cy="19" r="2.3" fill="white" />
     </svg>
   );
 }
